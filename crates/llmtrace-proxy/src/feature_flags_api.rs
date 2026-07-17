@@ -690,7 +690,11 @@ pub async fn get_features(
     }
     let cfg = state.config_handle.snapshot();
     let flags = FeatureFlags::from_config(&cfg);
-    let view = build_view(flags, &state.ml_status, state.judge_worker_spawned);
+    let view = build_view(
+        flags,
+        &*state.ml_status.read().unwrap_or_else(|e| e.into_inner()),
+        state.judge_worker_spawned,
+    );
     no_store_json_response(StatusCode::OK, Json(view))
 }
 
@@ -762,7 +766,7 @@ pub async fn update_feature(
     let mut dropped_audit = record_audit_and_metrics(&state, &auth, &prev_flags, &next_flags).await;
     let view = build_view(
         next_flags.clone(),
-        &state.ml_status,
+        &*state.ml_status.read().unwrap_or_else(|e| e.into_inner()),
         state.judge_worker_spawned,
     );
     let mut warnings = collect_warnings(&prev_flags, &next_flags, &view);
@@ -827,7 +831,7 @@ pub async fn bulk_update_features(
     let mut dropped_audit = record_audit_and_metrics(&state, &auth, &prev_flags, &next_flags).await;
     let view = build_view(
         next_flags.clone(),
-        &state.ml_status,
+        &*state.ml_status.read().unwrap_or_else(|e| e.into_inner()),
         state.judge_worker_spawned,
     );
     let mut warnings = collect_warnings(&prev_flags, &next_flags, &view);
@@ -900,7 +904,7 @@ mod tests {
             fast_analyzer: security.clone(),
             security,
             #[cfg(feature = "ml")]
-            security_ensemble: None,
+            security_ensemble: Arc::new(std::sync::RwLock::new(None)),
             ensemble_runtime: Arc::new(EnsembleRuntimeHandle::inert()),
             storage_breaker,
             security_breaker,
@@ -917,7 +921,8 @@ mod tests {
             ),
             report_store: crate::compliance::new_report_store(),
             rate_limiter,
-            ml_status: crate::proxy::MlModelStatus::Disabled,
+            ml_status: Arc::new(std::sync::RwLock::new(crate::proxy::MlModelStatus::Disabled)),
+            security_slot: Arc::new(std::sync::RwLock::new(security.clone())),
             judge_worker_spawned: false,
             runtime_overlay_status: crate::proxy::RuntimeOverlayStatus::Disabled,
             shutdown: crate::shutdown::ShutdownCoordinator::new(30),

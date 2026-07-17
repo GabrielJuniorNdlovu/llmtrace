@@ -87,12 +87,16 @@ services:
       - "8080:8080"
     volumes:
       - ./config.yaml:/etc/llmtrace/config.yaml
+    env_file:
+      - .env
     environment:
       - LLMTRACE_CONFIG=/etc/llmtrace/config.yaml
-      # Keep the local stack responsive: ML model downloads can take minutes and
-      # block server startup if preloaded.
-      - LLMTRACE_ML_ENABLED=0
-      - LLMTRACE_ML_PRELOAD=0
+      # Enable ML preload so /health reports Initializing progress for the dashboard bar.
+      - LLMTRACE_ML_ENABLED=1
+      - LLMTRACE_ML_PRELOAD=1
+      # Upstream provider credential (from .env)
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LLMTRACE_UPSTREAM_URL=${LLMTRACE_UPSTREAM_URL}
     depends_on:
       clickhouse:
         condition: service_healthy

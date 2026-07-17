@@ -6,12 +6,14 @@ interface LoadingOverlayProps {
   progressPct: number;
   loadedModels?: number;
   totalModels?: number;
+  currentModel?: string;
 }
 
 export function LoadingOverlay({
   progressPct,
   loadedModels,
   totalModels,
+  currentModel,
 }: LoadingOverlayProps) {
   const clamped = Math.max(0, Math.min(100, progressPct));
   return (
@@ -44,6 +46,11 @@ export function LoadingOverlay({
             </span>
           )}
         </div>
+        {currentModel ? (
+          <p className="mt-2 truncate text-xs text-muted-foreground" title={currentModel}>
+            Loading: {currentModel}
+          </p>
+        ) : null}
       </div>
     </div>
   );

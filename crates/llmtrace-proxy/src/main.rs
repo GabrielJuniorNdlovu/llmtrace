@@ -16,7 +16,9 @@ use llmtrace_proxy::config;
 use llmtrace_proxy::cost::CostEstimator;
 use llmtrace_proxy::cost_caps::CostTracker;
 use llmtrace_proxy::openapi::ApiDoc;
-use llmtrace_proxy::proxy::{health_handler, proxy_handler, AppState, MlModelStatus};
+use llmtrace_proxy::proxy::{
+    health_handler, proxy_handler, AppState, MlModelStatus, SwappableAnalyzer,
+};
 use llmtrace_proxy::shutdown::{self, ShutdownCoordinator};
 use llmtrace_security::RegexSecurityAnalyzer;
 use llmtrace_storage::StorageProfile;
@@ -481,12 +483,19 @@ async fn build_app_state(
         .await
         .map_err(|e| anyhow::anyhow!("Failed to initialize storage: {}", e))?;
 
-    // Build the security analyzer — attempt ML warm-up if enabled and compiled
+    // Build the security analyzer — ML preload runs in the background so
+    // `/health` can report progress while the proxy is already listening.
     #[cfg(feature = "ml")]
-    let (security, security_ensemble, ml_status, ensemble_runtime) =
+    let (security, security_ensemble, ml_status, ensemble_runtime, ml_preload_job) =
         build_security_analyzer(&config).await?;
     #[cfg(not(feature = "ml"))]
-    let (security, ml_status, ensemble_runtime) = build_security_analyzer(&config).await?;
+    let (security, ml_status, ensemble_runtime, ml_preload_job) =
+        build_security_analyzer(&config).await?;
+
+    let swappable = SwappableAnalyzer::new(Arc::clone(&security));
+    let security_slot = swappable.slot();
+    let security: Arc<dyn SecurityAnalyzer> = Arc::new(swappable);
+    let ml_status = Arc::new(std::sync::RwLock::new(ml_status));
 
     // Regex-only analyzer for fast-path enforcement (near-zero latency).
     // Shares the jailbreak toggle with the ensemble's inner regex analyzer
@@ -691,6 +700,10 @@ async fn build_app_state(
     #[cfg(not(feature = "judge"))]
     let judge_worker_spawned: bool = false;
 
+    #[cfg(feature = "ml")]
+    let security_ensemble =
+        Arc::new(std::sync::RwLock::new(security_ensemble));
+
     let state = Arc::new(AppState {
         config_handle,
         client,
@@ -709,7 +722,8 @@ async fn build_app_state(
         action_router,
         report_store,
         rate_limiter,
-        ml_status,
+        ml_status: Arc::clone(&ml_status),
+        security_slot: Arc::clone(&security_slot),
         judge_worker_spawned,
         runtime_overlay_status,
         shutdown,
@@ -717,6 +731,14 @@ async fn build_app_state(
         ml_pipeline_semaphore,
         ready,
     });
+
+    // Background ML preload — publishes Initializing progress on /health.
+    #[cfg(feature = "ml")]
+    if let Some(job) = ml_preload_job {
+        spawn_ml_preload(Arc::clone(&state), job);
+    }
+    #[cfg(not(feature = "ml"))]
+    let _ = ml_preload_job;
 
     // Seed the per-flag state metric so dashboards reflect the
     // startup configuration immediately, without waiting for the first
@@ -740,12 +762,196 @@ async fn build_app_state(
     Ok(state)
 }
 
+/// Optional deferred ML preload job — runs after the HTTP server is up so
+/// `/health` can expose `ml.status=initializing` progress to the dashboard.
+#[cfg(feature = "ml")]
+struct MlPreloadJob {
+    ml_config: llmtrace_security::MLSecurityConfig,
+    ner_config: Option<llmtrace_security::NerConfig>,
+    ig_config: Option<llmtrace_security::InjecGuardConfig>,
+    pg_config: Option<llmtrace_security::PIGuardConfig>,
+    timeout: std::time::Duration,
+    operating_point: llmtrace_core::OperatingPoint,
+    over_defence: bool,
+    ml_enabled_flag: bool,
+    injecguard_enabled_flag: bool,
+    piguard_enabled_flag: bool,
+    jailbreak_enabled_flag: bool,
+    total_models: usize,
+    first_model: String,
+}
+
+#[cfg(feature = "ml")]
+fn spawn_ml_preload(state: Arc<AppState>, job: MlPreloadJob) {
+    tokio::spawn(async move {
+        let load_start = std::time::Instant::now();
+        let total = job.total_models.max(1);
+        let cache_dir = job
+            .ml_config
+            .cache_dir
+            .clone()
+            .unwrap_or_else(|| "~/.cache/llmtrace/models".to_string());
+        let expanded = shellexpand_home(&cache_dir);
+        let baseline = dir_size_bytes(std::path::Path::new(&expanded));
+        // Rough per-model download budget used only for UI progress (~700MB).
+        let bytes_budget = (700_u64 * 1024 * 1024).saturating_mul(total as u64).max(1);
+
+        let status_handle = Arc::clone(&state.ml_status);
+        let model_name = job.first_model.clone();
+        let monitor = {
+            let status_handle = Arc::clone(&status_handle);
+            let expanded = expanded.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    let grown = dir_size_bytes(std::path::Path::new(&expanded))
+                        .saturating_sub(baseline);
+                    let pct = ((grown as f64 / bytes_budget as f64) * 95.0).clamp(0.0, 95.0);
+                    if let Ok(mut guard) = status_handle.write() {
+                        if let MlModelStatus::Initializing {
+                            loaded_models,
+                            total_models,
+                            ..
+                        } = &*guard
+                        {
+                            *guard = MlModelStatus::Initializing {
+                                loaded_models: *loaded_models,
+                                total_models: *total_models,
+                                current_model: model_name.clone(),
+                                progress_pct: pct,
+                            };
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            })
+        };
+
+        let result = tokio::time::timeout(
+            job.timeout,
+            llmtrace_security::EnsembleSecurityAnalyzer::with_piguard(
+                &job.ml_config,
+                job.ner_config.as_ref(),
+                job.ig_config.as_ref(),
+                job.pg_config.as_ref(),
+            ),
+        )
+        .await;
+        monitor.abort();
+
+        match result {
+            Ok(Ok(ensemble)) => {
+                let load_time_ms = load_start.elapsed().as_millis() as u64;
+                let pi_loaded = ensemble.is_ml_active();
+                let ner_loaded = ensemble.is_ner_active();
+                let ig_loaded = ensemble.is_injecguard_active();
+                let pg_loaded = ensemble.is_piguard_active();
+                let op = match job.operating_point {
+                    llmtrace_core::OperatingPoint::HighRecall => {
+                        llmtrace_security::OperatingPoint::HighRecall
+                    }
+                    llmtrace_core::OperatingPoint::HighPrecision => {
+                        llmtrace_security::OperatingPoint::HighPrecision
+                    }
+                    llmtrace_core::OperatingPoint::Balanced => {
+                        llmtrace_security::OperatingPoint::Balanced
+                    }
+                };
+                let ensemble = ensemble
+                    .with_operating_point(op)
+                    .with_over_defence(job.over_defence);
+                let handle = ensemble.runtime_handle();
+                handle.set_ml(job.ml_enabled_flag);
+                handle.set_injecguard(job.injecguard_enabled_flag);
+                handle.set_piguard(job.piguard_enabled_flag);
+                handle.set_jailbreak(job.jailbreak_enabled_flag);
+                let ensemble_arc = Arc::new(ensemble);
+
+                if let Ok(mut slot) = state.security_slot.write() {
+                    *slot = Arc::clone(&ensemble_arc) as Arc<dyn SecurityAnalyzer>;
+                }
+                if let Ok(mut ens) = state.security_ensemble.write() {
+                    *ens = Some(Arc::clone(&ensemble_arc));
+                }
+                if let Ok(mut status) = state.ml_status.write() {
+                    *status = MlModelStatus::Loaded {
+                        prompt_injection: pi_loaded,
+                        ner: ner_loaded,
+                        injecguard: ig_loaded,
+                        piguard: pg_loaded,
+                        load_time_ms,
+                    };
+                }
+                info!(
+                    prompt_injection_loaded = pi_loaded,
+                    ner_loaded = ner_loaded,
+                    injecguard_loaded = ig_loaded,
+                    piguard_loaded = pg_loaded,
+                    load_time_ms = load_time_ms,
+                    "ML models pre-loaded in background"
+                );
+            }
+            Ok(Err(e)) => {
+                tracing::warn!(error = %e, "Background ML preload failed — keeping regex analyzer");
+                if let Ok(mut status) = state.ml_status.write() {
+                    *status = MlModelStatus::Failed {
+                        error: format!("{e}"),
+                    };
+                }
+            }
+            Err(_) => {
+                let err_msg = format!(
+                    "ML model download timed out after {}s",
+                    job.timeout.as_secs()
+                );
+                tracing::warn!("{err_msg}");
+                if let Ok(mut status) = state.ml_status.write() {
+                    *status = MlModelStatus::Failed { error: err_msg };
+                }
+            }
+        }
+    });
+}
+
+fn shellexpand_home(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix("~/") {
+        if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+            return std::path::Path::new(&home)
+                .join(rest)
+                .to_string_lossy()
+                .into_owned();
+        }
+    }
+    path.to_string()
+}
+
+fn dir_size_bytes(path: &std::path::Path) -> u64 {
+    fn walk(p: &std::path::Path) -> u64 {
+        let mut total = 0u64;
+        let Ok(entries) = std::fs::read_dir(p) else {
+            return 0;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                total = total.saturating_add(walk(&path));
+            } else if let Ok(meta) = entry.metadata() {
+                total = total.saturating_add(meta.len());
+            }
+        }
+        total
+    }
+    walk(path)
+}
+
 /// Build the security analyzer, pre-loading ML models at startup by default.
 ///
 /// Since `ml_enabled` defaults to `true`, the default analyzer is the Ensemble
 /// (regex + ML fusion), which preserves the regex baseline while adding ML.
 /// When the `ml` feature is compiled in and `ml_preload: true` (also default),
-/// this loads the prompt injection and NER models eagerly.
+/// this starts with a regex fallback and returns an [`MlPreloadJob`] so models
+/// can load in the background with progress published on `/health`.
 /// On failure, it falls back to the regex-only analyzer and logs a warning.
 /// Return type for [`build_security_analyzer`]. The second element is
 /// the concrete `Arc<EnsembleSecurityAnalyzer>` (when the `ml` feature
@@ -758,12 +964,14 @@ type SecurityAnalyzerBuildResult = (
     Option<Arc<llmtrace_security::EnsembleSecurityAnalyzer>>,
     MlModelStatus,
     Arc<llmtrace_security::EnsembleRuntimeHandle>,
+    Option<MlPreloadJob>,
 );
 #[cfg(not(feature = "ml"))]
 type SecurityAnalyzerBuildResult = (
     Arc<dyn SecurityAnalyzer>,
     MlModelStatus,
     Arc<llmtrace_security::EnsembleRuntimeHandle>,
+    Option<()>,
 );
 
 async fn build_security_analyzer(
@@ -793,23 +1001,9 @@ async fn build_security_analyzer(
     #[cfg(feature = "ml")]
     {
         if ml_enabled && ml_preload {
-            info!("Pre-loading ML models at startup (ml_preload=true)");
-            let load_start = std::time::Instant::now();
-
-            let ml_config = llmtrace_security::MLSecurityConfig {
-                model_id: config.security_analysis.ml_model.clone(),
-                threshold: config.security_analysis.ml_threshold,
-                cache_dir: Some(ml_cache_dir.clone()),
-            };
-
-            let ner_config = if config.security_analysis.ner_enabled {
-                Some(llmtrace_security::NerConfig {
-                    model_id: config.security_analysis.ner_model.clone(),
-                    cache_dir: Some(ml_cache_dir.clone()),
-                })
-            } else {
-                None
-            };
+            info!(
+                "Scheduling ML model preload in the background (ml_preload=true) so /health can report progress"
+            );
 
             let ig_config = if config.security_analysis.injecguard_enabled {
                 Some(llmtrace_security::InjecGuardConfig {
@@ -831,119 +1025,67 @@ async fn build_security_analyzer(
                 None
             };
 
-            // Apply download timeout
-            let timeout = std::time::Duration::from_secs(
-                config.security_analysis.ml_download_timeout_seconds,
-            );
+            let ner_config = if config.security_analysis.ner_enabled {
+                Some(llmtrace_security::NerConfig {
+                    model_id: config.security_analysis.ner_model.clone(),
+                    cache_dir: Some(ml_cache_dir.clone()),
+                })
+            } else {
+                None
+            };
 
-            match tokio::time::timeout(
-                timeout,
-                llmtrace_security::EnsembleSecurityAnalyzer::with_piguard(
-                    &ml_config,
-                    ner_config.as_ref(),
-                    ig_config.as_ref(),
-                    pg_config.as_ref(),
-                ),
-            )
-            .await
-            {
-                Ok(Ok(ensemble)) => {
-                    let load_time_ms = load_start.elapsed().as_millis() as u64;
-                    let pi_loaded = ensemble.is_ml_active();
-                    let ner_loaded = ensemble.is_ner_active();
-                    let ig_loaded = ensemble.is_injecguard_active();
-                    let pg_loaded = ensemble.is_piguard_active();
-                    // DeBERTa models ~500 MB each, NER (BERT-base) ~400 MB
-                    let deberta_count = [pi_loaded, ig_loaded, pg_loaded]
-                        .iter()
-                        .filter(|&&v| v)
-                        .count();
-                    let ner_mb = if ner_loaded { 400 } else { 0 };
-                    let estimated_mb = deberta_count * 500 + ner_mb;
-                    let total_models = deberta_count + (ner_loaded as usize);
-                    info!(
-                        prompt_injection_loaded = pi_loaded,
-                        ner_loaded = ner_loaded,
-                        injecguard_loaded = ig_loaded,
-                        piguard_loaded = pg_loaded,
-                        load_time_ms = load_time_ms,
-                        estimated_memory_mb = estimated_mb,
-                        "ML models pre-loaded at startup (~{estimated_mb} MB for {total_models} model(s))"
-                    );
-                    let status = MlModelStatus::Loaded {
-                        prompt_injection: pi_loaded,
-                        ner: ner_loaded,
-                        injecguard: ig_loaded,
-                        piguard: pg_loaded,
-                        load_time_ms,
-                    };
-                    let op = match config.security_analysis.operating_point {
-                        llmtrace_core::OperatingPoint::HighRecall => {
-                            llmtrace_security::OperatingPoint::HighRecall
-                        }
-                        llmtrace_core::OperatingPoint::HighPrecision => {
-                            llmtrace_security::OperatingPoint::HighPrecision
-                        }
-                        llmtrace_core::OperatingPoint::Balanced => {
-                            llmtrace_security::OperatingPoint::Balanced
-                        }
-                    };
-                    let ensemble = ensemble
-                        .with_operating_point(op)
-                        .with_over_defence(config.security_analysis.over_defence);
-                    // Initialise the runtime handle from config so the
-                    // starting state matches what the operator asked for.
-                    let handle = ensemble.runtime_handle();
-                    handle.set_ml(config.security_analysis.ml_enabled);
-                    handle.set_injecguard(config.security_analysis.injecguard_enabled);
-                    handle.set_piguard(config.security_analysis.piguard_enabled);
-                    handle.set_jailbreak(config.security_analysis.jailbreak_enabled);
-                    let ensemble_arc = Arc::new(ensemble);
-                    Ok((
-                        Arc::clone(&ensemble_arc) as Arc<dyn SecurityAnalyzer>,
-                        Some(ensemble_arc),
-                        status,
-                        Arc::new(handle),
-                    ))
-                }
-                Ok(Err(e)) => {
-                    let err_msg = format!("{e}");
-                    tracing::warn!(
-                        error = %e,
-                        "ML model loading failed at startup — falling back to regex analyzer"
-                    );
-                    let regex = RegexSecurityAnalyzer::new().map_err(|e| {
-                        anyhow::anyhow!("Failed to initialize security analyzer: {}", e)
-                    })?;
-                    Ok((
-                        Arc::new(regex) as Arc<dyn SecurityAnalyzer>,
-                        None,
-                        MlModelStatus::Failed { error: err_msg },
-                        Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
-                    ))
-                }
-                Err(_) => {
-                    let err_msg = format!(
-                        "ML model download timed out after {}s",
-                        config.security_analysis.ml_download_timeout_seconds
-                    );
-                    tracing::warn!(
-                        timeout_seconds = config.security_analysis.ml_download_timeout_seconds,
-                        "ML model download timed out — falling back to regex analyzer"
-                    );
-                    let regex = RegexSecurityAnalyzer::new().map_err(|e| {
-                        anyhow::anyhow!("Failed to initialize security analyzer: {}", e)
-                    })?;
-                    Ok((
-                        Arc::new(regex) as Arc<dyn SecurityAnalyzer>,
-                        None,
-                        MlModelStatus::Failed { error: err_msg },
-                        Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
-                    ))
-                }
+            let mut total_models = 1usize; // prompt-injection DeBERTa
+            if ner_config.is_some() {
+                total_models += 1;
             }
+            if ig_config.is_some() {
+                total_models += 1;
+            }
+            if pg_config.is_some() {
+                total_models += 1;
+            }
+
+            let first_model = config.security_analysis.ml_model.clone();
+            let job = MlPreloadJob {
+                ml_config: llmtrace_security::MLSecurityConfig {
+                    model_id: config.security_analysis.ml_model.clone(),
+                    threshold: config.security_analysis.ml_threshold,
+                    cache_dir: Some(ml_cache_dir.clone()),
+                },
+                ner_config,
+                ig_config,
+                pg_config,
+                timeout: std::time::Duration::from_secs(
+                    config.security_analysis.ml_download_timeout_seconds,
+                ),
+                operating_point: config.security_analysis.operating_point.clone(),
+                over_defence: config.security_analysis.over_defence,
+                ml_enabled_flag: config.security_analysis.ml_enabled,
+                injecguard_enabled_flag: config.security_analysis.injecguard_enabled,
+                piguard_enabled_flag: config.security_analysis.piguard_enabled,
+                jailbreak_enabled_flag: config.security_analysis.jailbreak_enabled,
+                total_models,
+                first_model: first_model.clone(),
+            };
+
+            let regex = RegexSecurityAnalyzer::new()
+                .map_err(|e| anyhow::anyhow!("Failed to initialize security analyzer: {}", e))?;
+
+            let status = MlModelStatus::Initializing {
+                loaded_models: 0,
+                total_models,
+                current_model: first_model,
+                progress_pct: 0.0,
+            };
+
+            Ok((
+                Arc::new(regex) as Arc<dyn SecurityAnalyzer>,
+                None,
+                status,
+                Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
+                Some(job),
+            ))
         } else if ml_enabled {
-            // ML enabled but preload disabled — will load on first request
             info!("ML enabled but ml_preload=false — models will load on first request");
             let regex = RegexSecurityAnalyzer::new()
                 .map_err(|e| anyhow::anyhow!("Failed to initialize security analyzer: {}", e))?;
@@ -952,6 +1094,7 @@ async fn build_security_analyzer(
                 None,
                 MlModelStatus::Disabled,
                 Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
+                None,
             ))
         } else {
             let regex = RegexSecurityAnalyzer::new()
@@ -961,19 +1104,21 @@ async fn build_security_analyzer(
                 None,
                 MlModelStatus::Disabled,
                 Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
+                None,
             ))
         }
     }
 
     #[cfg(not(feature = "ml"))]
     {
-        let _ = &config.security_analysis; // suppress unused warning
+        let _ = &config.security_analysis;
         let regex = RegexSecurityAnalyzer::new()
             .map_err(|e| anyhow::anyhow!("Failed to initialize security analyzer: {}", e))?;
         Ok((
             Arc::new(regex) as Arc<dyn SecurityAnalyzer>,
             MlModelStatus::Disabled,
             Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
+            None,
         ))
     }
 }

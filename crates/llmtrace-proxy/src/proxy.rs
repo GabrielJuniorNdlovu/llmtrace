@@ -131,6 +131,17 @@ pub enum RuntimeOverlayStatus {
 pub enum MlModelStatus {
     /// ML not enabled in configuration.
     Disabled,
+    /// ML models are downloading / loading; proxy serves traffic with regex fallback.
+    Initializing {
+        /// Models fully loaded so far.
+        loaded_models: usize,
+        /// Total models expected for this preload.
+        total_models: usize,
+        /// HuggingFace model id currently being loaded (if any).
+        current_model: String,
+        /// Approximate completion percentage (0–100).
+        progress_pct: f64,
+    },
     /// ML models loaded successfully.
     Loaded {
         /// Whether the prompt injection model is available.
@@ -149,6 +160,81 @@ pub enum MlModelStatus {
         /// Error description.
         error: String,
     },
+}
+
+/// Security analyzer that delegates to a hot-swappable inner analyzer.
+///
+/// Used so the proxy can accept traffic with a regex fallback while ML models
+/// load in the background, then atomically switch to the ensemble.
+pub struct SwappableAnalyzer {
+    slot: Arc<std::sync::RwLock<Arc<dyn SecurityAnalyzer>>>,
+}
+
+impl SwappableAnalyzer {
+    /// Create a swappable wrapper around an initial analyzer.
+    pub fn new(initial: Arc<dyn SecurityAnalyzer>) -> Self {
+        Self {
+            slot: Arc::new(std::sync::RwLock::new(initial)),
+        }
+    }
+
+    /// Shared slot for background updates.
+    pub fn slot(&self) -> Arc<std::sync::RwLock<Arc<dyn SecurityAnalyzer>>> {
+        Arc::clone(&self.slot)
+    }
+}
+
+#[async_trait::async_trait]
+impl SecurityAnalyzer for SwappableAnalyzer {
+    async fn analyze_request(
+        &self,
+        prompt: &str,
+        context: &AnalysisContext,
+    ) -> llmtrace_core::Result<Vec<SecurityFinding>> {
+        let analyzer = self
+            .slot
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        analyzer.analyze_request(prompt, context).await
+    }
+
+    async fn analyze_response(
+        &self,
+        response: &str,
+        context: &AnalysisContext,
+    ) -> llmtrace_core::Result<Vec<SecurityFinding>> {
+        let analyzer = self
+            .slot
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        analyzer.analyze_response(response, context).await
+    }
+
+    fn name(&self) -> &'static str {
+        "SwappableAnalyzer"
+    }
+
+    fn version(&self) -> &'static str {
+        env!("CARGO_PKG_VERSION")
+    }
+
+    fn supported_finding_types(&self) -> Vec<String> {
+        self.slot
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .supported_finding_types()
+    }
+
+    async fn health_check(&self) -> llmtrace_core::Result<()> {
+        let analyzer = self
+            .slot
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        analyzer.health_check().await
+    }
 }
 
 /// Shared state threaded through axum handlers via [`State`].
@@ -174,7 +260,8 @@ pub struct AppState {
     /// [`AppState::security`]; only the zone-aware path needs the
     /// concrete type.
     #[cfg(feature = "ml")]
-    pub security_ensemble: Option<Arc<llmtrace_security::EnsembleSecurityAnalyzer>>,
+    pub security_ensemble:
+        Arc<std::sync::RwLock<Option<Arc<llmtrace_security::EnsembleSecurityAnalyzer>>>>,
     /// Runtime handle for toggling ensemble feature flags from the admin
     /// API (issue #42). When the ensemble is not constructed (regex-only
     /// fallback path), this is an inert handle whose writes round-trip
@@ -211,7 +298,15 @@ pub struct AppState {
     /// `cfg.rate_limiting.enabled`.
     pub rate_limiter: crate::rate_limit::RateLimiter,
     /// Status of ML model loading at startup.
-    pub ml_status: MlModelStatus,
+    ///
+    /// Wrapped in [`Arc`] + [`RwLock`] so a background preload task can publish
+    /// `Initializing` progress to `/health` while the proxy is already serving.
+    pub ml_status: Arc<std::sync::RwLock<MlModelStatus>>,
+    /// Slot used to hot-swap the live security analyzer after ML preload.
+    ///
+    /// [`AppState::security`] is a [`SwappableAnalyzer`] that reads from this
+    /// same lock; background preload writes the ensemble here when ready.
+    pub security_slot: Arc<std::sync::RwLock<Arc<dyn SecurityAnalyzer>>>,
     /// Whether the LLM-as-a-Judge worker was spawned at startup (#43).
     ///
     /// Computed once by `build_app_state`: `true` iff `judge.enabled`
@@ -437,9 +532,18 @@ async fn run_request_enforcement(
 ) {
     #[cfg(feature = "ml")]
     {
-        let take_zone_path = zone_detection_active && state.security_ensemble.is_some();
+        // Clone the ensemble Arc under the lock, then drop the guard before
+        // any `.await` — `RwLockReadGuard` is `!Send` and would make the
+        // axum handler Future `!Send`.
+        let ensemble_opt = state
+            .security_ensemble
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(Arc::clone);
+        let take_zone_path = zone_detection_active && ensemble_opt.is_some();
         if take_zone_path {
-            if let Some(ensemble) = state.security_ensemble.as_ref() {
+            if let Some(ensemble) = ensemble_opt {
                 let scan_instr = cfg.security_analysis.zone_detection.scan_instruction_zones;
                 // Clone outcome bits we need; the ensemble call moves
                 // its inputs into spawned tasks.
@@ -455,7 +559,6 @@ async fn run_request_enforcement(
                     .await;
                 }
                 let timeout = std::time::Duration::from_millis(cfg.enforcement.timeout_ms);
-                let ensemble = Arc::clone(ensemble);
                 let ctx_owned = context.clone();
                 let analyzed = tokio::time::timeout(
                     timeout,
@@ -2815,9 +2918,21 @@ pub async fn health_handler(State(state): State<Arc<AppState>>) -> Response<Body
     let storage_circuit = state.storage_breaker.state().await;
     let security_circuit = state.security_breaker.state().await;
 
-    let ml_status = match &state.ml_status {
+    let ml_status = match &*state.ml_status.read().unwrap_or_else(|e| e.into_inner()) {
         MlModelStatus::Disabled => serde_json::json!({
             "status": "disabled",
+        }),
+        MlModelStatus::Initializing {
+            loaded_models,
+            total_models,
+            current_model,
+            progress_pct,
+        } => serde_json::json!({
+            "status": "initializing",
+            "loaded_models": loaded_models,
+            "total_models": total_models,
+            "current_model": current_model,
+            "progress_pct": progress_pct,
         }),
         MlModelStatus::Loaded {
             prompt_injection,
@@ -2844,6 +2959,9 @@ pub async fn health_handler(State(state): State<Arc<AppState>>) -> Response<Body
                 "load_time_ms": load_time_ms,
                 "injection_detector_count": injection_detectors,
                 "voting_mode": voting_mode,
+                "progress_pct": 100.0,
+                "loaded_models": injection_detectors.saturating_sub(1),
+                "total_models": injection_detectors.saturating_sub(1),
             })
         }
         MlModelStatus::Failed { error } => serde_json::json!({
@@ -3897,7 +4015,7 @@ mod tenant_routing_tests {
             fast_analyzer: security.clone(),
             security,
             #[cfg(feature = "ml")]
-            security_ensemble: None,
+            security_ensemble: Arc::new(std::sync::RwLock::new(None)),
             ensemble_runtime: Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
             storage_breaker,
             security_breaker,
@@ -3914,7 +4032,8 @@ mod tenant_routing_tests {
             ),
             report_store: crate::compliance::new_report_store(),
             rate_limiter,
-            ml_status: crate::proxy::MlModelStatus::Disabled,
+            ml_status: Arc::new(std::sync::RwLock::new(crate::proxy::MlModelStatus::Disabled)),
+            security_slot: Arc::new(std::sync::RwLock::new(security.clone())),
             judge_worker_spawned: false,
             runtime_overlay_status: crate::proxy::RuntimeOverlayStatus::Disabled,
             shutdown: crate::shutdown::ShutdownCoordinator::new(30),

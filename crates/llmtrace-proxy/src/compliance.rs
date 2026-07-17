@@ -846,7 +846,7 @@ mod tests {
             fast_analyzer: security.clone(),
             security,
             #[cfg(feature = "ml")]
-            security_ensemble: None,
+            security_ensemble: Arc::new(std::sync::RwLock::new(None)),
             ensemble_runtime: std::sync::Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
             storage_breaker,
             security_breaker,
@@ -863,7 +863,8 @@ mod tests {
             ),
             report_store: new_report_store(),
             rate_limiter,
-            ml_status: crate::proxy::MlModelStatus::Disabled,
+            ml_status: Arc::new(std::sync::RwLock::new(crate::proxy::MlModelStatus::Disabled)),
+            security_slot: Arc::new(std::sync::RwLock::new(security.clone())),
             judge_worker_spawned: false,
             runtime_overlay_status: crate::proxy::RuntimeOverlayStatus::Disabled,
             shutdown: crate::shutdown::ShutdownCoordinator::new(30),

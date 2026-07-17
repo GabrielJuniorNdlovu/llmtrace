@@ -19,6 +19,7 @@ interface HealthPayload {
     progress_pct?: number;
     loaded_models?: number;
     total_models?: number;
+    current_model?: string;
   };
 }
 
@@ -82,6 +83,7 @@ function ChromedShell({ children }: { children: React.ReactNode }) {
   const [bootProgress, setBootProgress] = useState(0);
   const [loadedModels, setLoadedModels] = useState<number | undefined>();
   const [totalModels, setTotalModels] = useState<number | undefined>();
+  const [currentModel, setCurrentModel] = useState<string | undefined>();
   const [retryAttempt, setRetryAttempt] = useState(0);
   const [retryDelayMs, setRetryDelayMs] = useState<number | undefined>();
   const [nextRetryAt, setNextRetryAt] = useState<number | null>(null);
@@ -152,6 +154,7 @@ function ChromedShell({ children }: { children: React.ReactNode }) {
       setBootProgress(progress);
       setLoadedModels(payload.ml?.loaded_models);
       setTotalModels(payload.ml?.total_models);
+      setCurrentModel(payload.ml?.current_model);
       retryAttemptRef.current = 0;
       setRetryAttempt(0);
       setNextRetryAt(null);
@@ -189,11 +192,28 @@ function ChromedShell({ children }: { children: React.ReactNode }) {
     const checkHealth = async () => {
       try {
         const response = await fetch("/health", { cache: "no-store" });
+        // Proxy returns 503 while starting — still parse the body so the
+        // bootstrap progress bar can move (ml.progress_pct / loaded_models).
+        let payload: HealthPayload | null = null;
+        try {
+          payload = (await response.json()) as HealthPayload;
+        } catch {
+          payload = null;
+        }
+
+        if (payload && isInitializing(payload)) {
+          moveToInitializing(payload);
+          return;
+        }
+
         if (!response.ok) {
           throw new Error(`Health status ${response.status}`);
         }
 
-        const payload = (await response.json()) as HealthPayload;
+        if (!payload) {
+          throw new Error("Empty health payload");
+        }
+
         const healthy = isHealthy(payload);
         const initializing = isInitializing(payload);
 
@@ -249,6 +269,7 @@ function ChromedShell({ children }: { children: React.ReactNode }) {
             progressPct={bootProgress}
             loadedModels={loadedModels}
             totalModels={totalModels}
+            currentModel={currentModel}
           />
         </div>
       )}
