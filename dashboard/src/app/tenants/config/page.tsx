@@ -80,7 +80,10 @@ function ConfigContent() {
     }
   }
 
-  if (loading) return <div className="p-8 text-center">Loading configuration…</div>;
+  const inputClass =
+    "rounded-xl border border-white/5 bg-card/50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary";
+
+  if (loading) return <div className="p-8 text-center text-sm text-muted-foreground">Loading configuration…</div>;
   if (error && !tenant) return <div className="p-8 text-center text-destructive">{error}</div>;
   if (!tenant) return <div className="p-8 text-center text-destructive">Tenant not found</div>;
 
@@ -91,7 +94,7 @@ function ConfigContent() {
           <Button variant="ghost" size="icon" onClick={() => router.back()}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <h1 className="text-3xl font-bold" data-testid="tenant-config-heading">Tenant Configuration</h1>
+          <h1 className="text-2xl font-semibold" data-testid="tenant-config-heading">Tenant Configuration</h1>
         </div>
         <Button onClick={handleSave} disabled={saving} className="gap-2">
           <Save className="h-4 w-4" />
@@ -100,13 +103,13 @@ function ConfigContent() {
       </div>
 
       {success && (
-        <div className="bg-success/10 border border-success/30 text-success p-3 rounded-md text-sm">
+        <div className="bg-success/10 border border-success/30 text-success p-3 rounded-xl text-sm">
           Configuration saved successfully
         </div>
       )}
 
       {error && (
-        <div className="bg-destructive/10 border border-destructive/20 text-destructive p-3 rounded-md text-sm">
+        <div className="bg-destructive/10 border border-destructive/20 text-destructive p-3 rounded-xl text-sm">
           {error}
         </div>
       )}
@@ -127,7 +130,7 @@ function ConfigContent() {
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                className={`w-full ${inputClass}`}
               />
             </div>
             <div className="space-y-2">
@@ -135,7 +138,7 @@ function ConfigContent() {
               <select
                 value={plan}
                 onChange={(e) => setPlan(e.target.value)}
-                className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                className={`w-full ${inputClass}`}
               >
                 <option value="default">Default</option>
                 <option value="free">Free</option>
@@ -161,7 +164,7 @@ function ConfigContent() {
                 name="monitoring_scope"
                 value={scope}
                 onChange={(e) => setScope(e.target.value as MonitoringScope)}
-                className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                className={`w-full ${inputClass}`}
               >
                 <option value="hybrid">Hybrid (Input + Output)</option>
                 <option value="input_only">Input Only</option>
@@ -191,7 +194,7 @@ function ConfigContent() {
                 placeholder="Unlimited"
                 value={rateLimit}
                 onChange={(e) => setRateLimit(e.target.value)}
-                className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                className={`w-full ${inputClass}`}
               />
             </div>
           </CardContent>
@@ -215,7 +218,7 @@ function ConfigContent() {
                 placeholder="Unlimited"
                 value={budget}
                 onChange={(e) => setBudget(e.target.value)}
-                className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                className={`w-full ${inputClass}`}
               />
             </div>
           </CardContent>

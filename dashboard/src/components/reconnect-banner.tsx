@@ -18,7 +18,7 @@ export function ReconnectBanner({
   return (
     <div
       data-testid="proxy-reconnect-banner"
-      className="sticky top-0 z-40 border-b border-warning/30 bg-warning/10 px-4 py-2 text-warning"
+      className="sticky top-0 z-40 mx-8 mb-2 rounded-2xl border border-warning/30 bg-warning/10 px-4 py-2.5 text-warning"
     >
       <div className="flex items-center gap-3 text-sm">
         <AlertTriangle className="h-4 w-4 shrink-0" />

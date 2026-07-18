@@ -93,12 +93,9 @@ const sections: GuideSection[] = [
 export default function GuidePage() {
   return (
     <div className="space-y-6">
-      <div className="space-y-2">
-        <h1 className="text-3xl font-bold">Dashboard Guide</h1>
-        <p className="text-muted-foreground">
-          Visual walkthrough of LLMTrace dashboard functionality. Screenshots are captured with Playwright from a running stack.
-        </p>
-      </div>
+      <p className="text-sm text-muted-foreground">
+        Visual walkthrough of LLMTrace dashboard functionality. Screenshots are captured with Playwright from a running stack.
+      </p>
 
       {sections.map((section) => (
         <Card key={section.title} className="overflow-hidden">
@@ -112,7 +109,7 @@ export default function GuidePage() {
             <img
               src={section.image}
               alt={`${section.title} screenshot`}
-              className="w-full rounded-md border"
+              className="w-full rounded-2xl border border-white/5"
             />
             <p className="text-sm">{section.description}</p>
             <p className="text-sm text-muted-foreground">{section.learn}</p>

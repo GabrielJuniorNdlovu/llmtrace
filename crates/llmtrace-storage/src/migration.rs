@@ -66,6 +66,11 @@ pub fn sqlite_migrations() -> Vec<Migration> {
             description: "add_tenant_upstream".to_string(),
             sql: include_str!("../migrations/sqlite/007_add_tenant_upstream.sql"),
         },
+        Migration {
+            version: 8,
+            description: "users_and_sessions".to_string(),
+            sql: include_str!("../migrations/sqlite/008_users_and_sessions.sql"),
+        },
     ]
 }
 
@@ -102,6 +107,11 @@ pub fn postgres_migrations() -> Vec<Migration> {
             version: 6,
             description: "judge_verdicts".to_string(),
             sql: include_str!("../migrations/postgres/006_judge_verdicts.sql"),
+        },
+        Migration {
+            version: 7,
+            description: "users_and_sessions".to_string(),
+            sql: include_str!("../migrations/postgres/007_users_and_sessions.sql"),
         },
     ]
 }

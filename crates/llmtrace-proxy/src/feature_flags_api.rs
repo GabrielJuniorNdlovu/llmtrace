@@ -947,6 +947,7 @@ mod tests {
             tenant_id: TenantId::new(),
             role: ApiKeyRole::Admin,
             key_id: None,
+            user_id: None,
         }
     }
 
@@ -955,6 +956,7 @@ mod tests {
             tenant_id: TenantId::new(),
             role: ApiKeyRole::Viewer,
             key_id: None,
+            user_id: None,
         }
     }
 
@@ -1517,6 +1519,7 @@ mod tests {
             tenant_id,
             role: ApiKeyRole::Admin,
             key_id: None,
+            user_id: None,
         };
         let req = Request::builder()
             .method("PUT")

@@ -97,6 +97,12 @@ services:
       # Upstream provider credential (from .env)
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - LLMTRACE_UPSTREAM_URL=${LLMTRACE_UPSTREAM_URL}
+      # Google OAuth (optional — email/password signup works without these)
+      - LLMTRACE_GOOGLE_CLIENT_ID=${LLMTRACE_GOOGLE_CLIENT_ID:-}
+      - LLMTRACE_GOOGLE_CLIENT_SECRET=${LLMTRACE_GOOGLE_CLIENT_SECRET:-}
+      # Bootstrap operator key (used by "Sign in with admin key")
+      - LLMTRACE_AUTH_ENABLED=${LLMTRACE_AUTH_ENABLED:-0}
+      - LLMTRACE_AUTH_ADMIN_KEY=${LLMTRACE_AUTH_ADMIN_KEY:-}
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -115,6 +121,7 @@ services:
       dockerfile: Dockerfile
       args:
         - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8080}
+        - NEXT_PUBLIC_GOOGLE_CLIENT_ID=${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
     ports:
       - "${DASHBOARD_PORT:-3000}:3000"
     environment:
@@ -124,12 +131,14 @@ services:
       CLICKHOUSE_URL: "http://clickhouse:8123"
       # Client-side URL (browser → proxy)
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
+      NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
+      NEXT_PUBLIC_DASHBOARD_URL: ${NEXT_PUBLIC_DASHBOARD_URL:-http://localhost:3000}
+      LLMTRACE_GOOGLE_CLIENT_ID: ${LLMTRACE_GOOGLE_CLIENT_ID:-}
       # Listen on all interfaces
       HOSTNAME: "0.0.0.0"
-      # Local-dev escape hatch: skip the admin-key login gate when the
-      # upstream proxy is running without an admin key configured. See
-      # issue #250 — production deployments must NOT set this.
-      LLMTRACE_DASHBOARD_AUTH_DISABLED: "${LLMTRACE_DASHBOARD_AUTH_DISABLED:-1}"
+      # Local-dev escape hatch: skip the login gate when set to 1.
+      # Set to 0 to exercise signup/login locally.
+      LLMTRACE_DASHBOARD_AUTH_DISABLED: "${LLMTRACE_DASHBOARD_AUTH_DISABLED:-0}"
     depends_on:
       - llmtrace-proxy
     restart: unless-stopped

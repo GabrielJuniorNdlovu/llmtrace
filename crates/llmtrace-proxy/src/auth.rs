@@ -94,12 +94,33 @@ pub async fn auth_middleware(
 
     let cfg = state.config_handle.snapshot();
 
-    // When auth is disabled, inject a permissive AuthContext using the legacy
-    // tenant resolution so downstream handlers can always rely on extensions.
+    let path = req.uri().path();
+    // Public endpoints — health, docs, and dashboard user auth entry points.
+    if path == "/health"
+        || path.starts_with("/swagger-ui")
+        || path.starts_with("/api-doc")
+        || path == "/api/v1/auth/signup"
+        || path == "/api/v1/auth/login"
+        || path == "/api/v1/auth/logout"
+        || path == "/api/v1/auth/oauth/google"
+    {
+        return next.run(req).await;
+    }
+
+    // When auth is disabled, prefer a real user session when present so
+    // `/api/v1/auth/me` still works; otherwise inject a permissive Admin context.
     if !cfg.auth.enabled {
-        // Auth disabled grants a permissive Admin context. Honour an explicit
-        // `X-LLMTrace-Tenant-Scope: all` for cross-tenant reads; otherwise scope
-        // to the resolved single tenant.
+        if let Some(token) = extract_bearer_token(req.headers()) {
+            match crate::user_auth::try_resolve_session(&state, token, req.headers()).await {
+                Ok(Some((ctx, scope))) => {
+                    req.extensions_mut().insert(ctx);
+                    req.extensions_mut().insert(scope);
+                    return next.run(req).await;
+                }
+                Ok(None) => {}
+                Err(resp) => return resp,
+            }
+        }
         let tenant_id = crate::proxy::resolve_tenant(req.headers()).unwrap_or_default();
         let scope = if wants_all_tenants(req.headers()) {
             TenantScope::All
@@ -110,18 +131,10 @@ pub async fn auth_middleware(
             tenant_id,
             role: ApiKeyRole::Admin,
             key_id: None,
+            user_id: None,
         };
         req.extensions_mut().insert(ctx);
         req.extensions_mut().insert(scope);
-        return next.run(req).await;
-    }
-
-    // Allow health endpoint without auth so liveness/startup checks work even
-    // when authentication is enabled.
-    let path = req.uri().path();
-    // Swagger/OpenAPI docs are also served without auth so operators can
-    // inspect the API surface even before bootstrap keys are configured.
-    if path == "/health" || path.starts_with("/swagger-ui") || path.starts_with("/api-doc") {
         return next.run(req).await;
     }
 
@@ -146,6 +159,7 @@ pub async fn auth_middleware(
                     tenant_id: tenant.id,
                     role: ApiKeyRole::Operator, // Token grants operator access for traffic
                     key_id: None,
+                    user_id: None,
                 };
                 req.extensions_mut().insert(ctx);
                 req.extensions_mut().insert(TenantScope::Single(tenant.id));
@@ -192,6 +206,7 @@ pub async fn auth_middleware(
                     tenant_id,
                     role: ApiKeyRole::Admin,
                     key_id: None,
+                    user_id: None,
                 };
                 req.extensions_mut().insert(ctx);
                 if let Some(scope) = scope {
@@ -201,7 +216,18 @@ pub async fn auth_middleware(
             }
         }
 
-        // Look up key in the database
+        // Dashboard user session tokens (`llmts_…`)
+        match crate::user_auth::try_resolve_session(&state, token, req.headers()).await {
+            Ok(Some((ctx, scope))) => {
+                req.extensions_mut().insert(ctx);
+                req.extensions_mut().insert(scope);
+                return next.run(req).await;
+            }
+            Ok(None) => {}
+            Err(resp) => return resp,
+        }
+
+        // Look up API key in the database
         let key_hash = hash_api_key(token);
         match state.metadata().get_api_key_by_hash(&key_hash).await {
             Ok(Some(record)) => {
@@ -222,6 +248,7 @@ pub async fn auth_middleware(
                     tenant_id: record.tenant_id,
                     role: record.role,
                     key_id: Some(record.id),
+                    user_id: None,
                 };
                 req.extensions_mut().insert(ctx);
                 req.extensions_mut().insert(scope);
@@ -588,7 +615,7 @@ fn resolve_tenant_from_header(headers: &HeaderMap) -> Option<TenantId> {
 }
 
 /// Build a JSON authentication error response.
-fn auth_error(status: StatusCode, message: &str) -> Response {
+pub(crate) fn auth_error(status: StatusCode, message: &str) -> Response {
     let body = ApiError {
         error: ApiErrorDetail {
             message: message.to_string(),
@@ -724,6 +751,7 @@ mod tests {
             tenant_id: TenantId::new(),
             role: ApiKeyRole::Admin,
             key_id: None,
+            user_id: None,
         });
         assert!(require_role(&extensions, ApiKeyRole::Viewer).is_none());
         assert!(require_role(&extensions, ApiKeyRole::Operator).is_none());
@@ -737,6 +765,7 @@ mod tests {
             tenant_id: TenantId::new(),
             role: ApiKeyRole::Viewer,
             key_id: None,
+            user_id: None,
         });
         assert!(require_role(&extensions, ApiKeyRole::Admin).is_some());
         assert!(require_role(&extensions, ApiKeyRole::Operator).is_some());

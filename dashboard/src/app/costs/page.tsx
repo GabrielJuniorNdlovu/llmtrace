@@ -32,6 +32,15 @@ interface LiveConfigResponse {
   };
 }
 
+const CHART_TOOLTIP = {
+  contentStyle: {
+    backgroundColor: "hsl(var(--card))",
+    borderColor: "hsl(var(--border))",
+    borderRadius: "12px",
+  },
+  itemStyle: { color: "hsl(var(--foreground))" },
+};
+
 export default function CostsPage() {
   const [costs, setCosts] = useState<SpendSnapshot | null>(null);
   const [stats, setStats] = useState<StorageStats | null>(null);
@@ -92,7 +101,9 @@ export default function CostsPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-3xl font-bold">Costs</h1>
+      <p className="text-sm text-muted-foreground">
+        Budget visibility and usage windows when cost caps are enabled
+      </p>
 
       <div className="grid gap-4 md:grid-cols-3">
         <StatCard
@@ -185,7 +196,10 @@ export default function CostsPage() {
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" className="stroke-muted" />
                 <XAxis dataKey="name" className="text-xs" />
                 <YAxis className="text-xs" />
-                <Tooltip formatter={(value: number) => `$${value.toFixed(4)}`} />
+                <Tooltip
+                  {...CHART_TOOLTIP}
+                  formatter={(value: number) => `$${value.toFixed(4)}`}
+                />
                 <Bar dataKey="spent" name="Spent" fill="hsl(var(--destructive))" radius={[4, 4, 0, 0]} />
                 <Bar
                   dataKey="remaining"

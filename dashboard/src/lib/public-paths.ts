@@ -8,6 +8,10 @@ export const UPSTREAM_PUBLIC_PATHS: readonly string[] = [
   "/api-doc",
   "/swagger-ui",
   "/health",
+  "/api/v1/auth/signup",
+  "/api/v1/auth/login",
+  "/api/v1/auth/logout",
+  "/api/v1/auth/oauth/google",
 ];
 
 /**

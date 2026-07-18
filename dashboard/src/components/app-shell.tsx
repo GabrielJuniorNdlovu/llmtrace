@@ -3,9 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Sidebar } from "@/components/sidebar";
+import { TopBar } from "@/components/top-bar";
 import { LoadingOverlay } from "@/components/loading-overlay";
 import { ReconnectBanner } from "@/components/reconnect-banner";
-import { ThemeToggle } from "@/components/theme-toggle";
 
 const UNCHROMED_PATHS: readonly string[] = ["/login"];
 
@@ -71,7 +71,9 @@ function resolveProgress(payload: HealthPayload): number {
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const unchromed = UNCHROMED_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+  const unchromed = UNCHROMED_PATHS.some(
+    (p) => pathname === p || pathname.startsWith(`${p}/`),
+  );
   if (unchromed) {
     return <>{children}</>;
   }
@@ -88,7 +90,9 @@ function ChromedShell({ children }: { children: React.ReactNode }) {
   const [retryDelayMs, setRetryDelayMs] = useState<number | undefined>();
   const [nextRetryAt, setNextRetryAt] = useState<number | null>(null);
   const [nowTs, setNowTs] = useState(Date.now());
-  const [bannerMessage, setBannerMessage] = useState("Reconnecting to proxy...");
+  const [bannerMessage, setBannerMessage] = useState(
+    "Reconnecting to proxy...",
+  );
 
   const reachedReadyRef = useRef(false);
   const retryAttemptRef = useRef(0);
@@ -243,16 +247,19 @@ function ChromedShell({ children }: { children: React.ReactNode }) {
   }, []);
 
   const retryInSeconds =
-    nextRetryAt === null ? 0 : Math.max(0, Math.ceil((nextRetryAt - nowTs) / 1000));
+    nextRetryAt === null
+      ? 0
+      : Math.max(0, Math.ceil((nextRetryAt - nowTs) / 1000));
   const showReconnectBanner = phase === "reconnecting" || retryAttempt > 0;
 
   return (
-    <div className="flex h-screen">
+    <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar />
-      <main className="flex flex-col flex-1 overflow-y-auto">
-        <header className="flex items-center justify-end px-4 py-2 border-b border-border">
-          <ThemeToggle />
-        </header>
+      <div className="flex h-screen flex-1 flex-col overflow-hidden">
+        <TopBar
+          proxyHealthy={phase === "ready"}
+          reconnecting={phase === "reconnecting"}
+        />
         {showReconnectBanner && (
           <ReconnectBanner
             attempt={retryAttempt > 0 ? retryAttempt : undefined}
@@ -261,8 +268,8 @@ function ChromedShell({ children }: { children: React.ReactNode }) {
             message={bannerMessage}
           />
         )}
-        <div className="container py-6">{children}</div>
-      </main>
+        <main className="flex-1 overflow-y-auto px-8 pb-8">{children}</main>
+      </div>
       {phase === "bootstrapping" && (
         <div data-testid="proxy-loading-overlay">
           <LoadingOverlay

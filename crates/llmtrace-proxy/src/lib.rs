@@ -34,6 +34,7 @@ pub mod secretbox;
 pub mod shutdown;
 pub mod streaming;
 pub mod tenant_api;
+pub mod user_auth;
 pub mod zone_pipeline;
 
 // Re-export key types for convenience

@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 use llmtrace_core::{
     AgentAction, ApiKeyRecord, ApiKeyRole, AuditEvent, AuditQuery, LLMProvider, LLMTraceError,
     MetadataRepository, Result, SecurityFinding, SpanEvent, StorageStats, Tenant, TenantConfig,
-    TenantId, TraceEvent, TraceQuery, TraceRepository, TraceSpan,
+    TenantId, TraceEvent, TraceQuery, TraceRepository, TraceSpan, UserRecord, UserSessionRecord,
 };
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
@@ -1400,6 +1400,136 @@ impl MetadataRepository for SqliteMetadataRepository {
         rows.iter().map(report_from_row).collect()
     }
 
+    async fn create_user(&self, user: &UserRecord) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO users (id, tenant_id, email, password_hash, display_name, google_sub, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        )
+        .bind(user.id.to_string())
+        .bind(user.tenant_id.0.to_string())
+        .bind(user.email.to_lowercase())
+        .bind(user.password_hash.as_deref())
+        .bind(&user.display_name)
+        .bind(user.google_sub.as_deref())
+        .bind(user.created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| LLMTraceError::Storage(format!("Failed to create user: {e}")))?;
+        Ok(())
+    }
+
+    async fn get_user_by_email(&self, email: &str) -> Result<Option<UserRecord>> {
+        let row = sqlx::query("SELECT * FROM users WHERE email = ?1 COLLATE NOCASE")
+            .bind(email)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| LLMTraceError::Storage(format!("Failed to look up user by email: {e}")))?;
+
+        row.as_ref().map(user_from_sqlite_row).transpose()
+    }
+
+    async fn get_user_by_id(&self, user_id: Uuid) -> Result<Option<UserRecord>> {
+        let row = sqlx::query("SELECT * FROM users WHERE id = ?1")
+            .bind(user_id.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| LLMTraceError::Storage(format!("Failed to look up user by id: {e}")))?;
+
+        row.as_ref().map(user_from_sqlite_row).transpose()
+    }
+
+    async fn get_user_by_google_sub(&self, google_sub: &str) -> Result<Option<UserRecord>> {
+        let row = sqlx::query("SELECT * FROM users WHERE google_sub = ?1")
+            .bind(google_sub)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| {
+                LLMTraceError::Storage(format!("Failed to look up user by google_sub: {e}"))
+            })?;
+
+        row.as_ref().map(user_from_sqlite_row).transpose()
+    }
+
+    async fn update_user(&self, user: &UserRecord) -> Result<()> {
+        let result = sqlx::query(
+            "UPDATE users SET password_hash = ?2, display_name = ?3, google_sub = ?4
+             WHERE id = ?1",
+        )
+        .bind(user.id.to_string())
+        .bind(user.password_hash.as_deref())
+        .bind(&user.display_name)
+        .bind(user.google_sub.as_deref())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| LLMTraceError::Storage(format!("Failed to update user: {e}")))?;
+
+        if result.rows_affected() == 0 {
+            return Err(LLMTraceError::Storage(format!(
+                "User {} not found",
+                user.id
+            )));
+        }
+        Ok(())
+    }
+
+    async fn create_user_session(&self, session: &UserSessionRecord) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO user_sessions (id, user_id, token_hash, expires_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+        )
+        .bind(session.id.to_string())
+        .bind(session.user_id.to_string())
+        .bind(&session.token_hash)
+        .bind(session.expires_at.to_rfc3339())
+        .bind(session.created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| LLMTraceError::Storage(format!("Failed to create user session: {e}")))?;
+        Ok(())
+    }
+
+    async fn get_user_session_by_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<UserSessionRecord>> {
+        let row = sqlx::query("SELECT * FROM user_sessions WHERE token_hash = ?1")
+            .bind(token_hash)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| LLMTraceError::Storage(format!("Failed to look up user session: {e}")))?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let expires_at = parse_datetime(&row.get::<String, _>("expires_at"))?;
+        if expires_at <= Utc::now() {
+            // Lazy expiry cleanup.
+            let _ = sqlx::query("DELETE FROM user_sessions WHERE token_hash = ?1")
+                .bind(token_hash)
+                .execute(&self.pool)
+                .await;
+            return Ok(None);
+        }
+
+        Ok(Some(UserSessionRecord {
+            id: parse_uuid(&row.get::<String, _>("id"))?,
+            user_id: parse_uuid(&row.get::<String, _>("user_id"))?,
+            token_hash: row.get("token_hash"),
+            expires_at,
+            created_at: parse_datetime(&row.get::<String, _>("created_at"))?,
+        }))
+    }
+
+    async fn delete_user_session_by_hash(&self, token_hash: &str) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM user_sessions WHERE token_hash = ?1")
+            .bind(token_hash)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| LLMTraceError::Storage(format!("Failed to delete user session: {e}")))?;
+        Ok(result.rows_affected() > 0)
+    }
+
     async fn health_check(&self) -> Result<()> {
         sqlx::query("SELECT 1")
             .fetch_one(&self.pool)
@@ -1407,6 +1537,18 @@ impl MetadataRepository for SqliteMetadataRepository {
             .map_err(|e| LLMTraceError::Storage(format!("Metadata health check failed: {e}")))?;
         Ok(())
     }
+}
+
+fn user_from_sqlite_row(row: &sqlx::sqlite::SqliteRow) -> Result<UserRecord> {
+    Ok(UserRecord {
+        id: parse_uuid(&row.get::<String, _>("id"))?,
+        tenant_id: TenantId(parse_uuid(&row.get::<String, _>("tenant_id"))?),
+        email: row.get("email"),
+        password_hash: row.get("password_hash"),
+        display_name: row.get("display_name"),
+        google_sub: row.get("google_sub"),
+        created_at: parse_datetime(&row.get::<String, _>("created_at"))?,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -2165,6 +2307,112 @@ mod tests {
             .unwrap()
             .expect("config should exist");
         assert_eq!(after.feature_flags.get("enable_pii"), Some(&false));
+    }
+
+    #[tokio::test]
+    async fn test_user_and_session_lifecycle() {
+        let repo = test_metadata().await;
+        let tenant = Tenant {
+            id: TenantId::new(),
+            name: "User Tenant".to_string(),
+            api_token: "tok-user".to_string(),
+            plan: "free".to_string(),
+            created_at: Utc::now(),
+            config: serde_json::json!({}),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
+        };
+        repo.create_tenant(&tenant).await.unwrap();
+
+        let user = UserRecord {
+            id: Uuid::new_v4(),
+            tenant_id: tenant.id,
+            email: "Alice@Example.COM".to_string(),
+            password_hash: Some("argon2-hash".to_string()),
+            display_name: "Alice".to_string(),
+            google_sub: None,
+            created_at: Utc::now(),
+        };
+        repo.create_user(&user).await.unwrap();
+
+        let by_email = repo
+            .get_user_by_email("alice@example.com")
+            .await
+            .unwrap()
+            .expect("user should exist");
+        assert_eq!(by_email.email, "alice@example.com");
+        assert_eq!(by_email.display_name, "Alice");
+
+        let by_id = repo
+            .get_user_by_id(user.id)
+            .await
+            .unwrap()
+            .expect("user should exist by id");
+        assert_eq!(by_id.id, user.id);
+
+        let session = UserSessionRecord {
+            id: Uuid::new_v4(),
+            user_id: user.id,
+            token_hash: "deadbeef".to_string(),
+            expires_at: Utc::now() + chrono::Duration::days(7),
+            created_at: Utc::now(),
+        };
+        repo.create_user_session(&session).await.unwrap();
+
+        let looked_up = repo
+            .get_user_session_by_hash("deadbeef")
+            .await
+            .unwrap()
+            .expect("session should exist");
+        assert_eq!(looked_up.user_id, user.id);
+
+        assert!(repo
+            .delete_user_session_by_hash("deadbeef")
+            .await
+            .unwrap());
+        assert!(repo
+            .get_user_session_by_hash("deadbeef")
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn test_rejects_duplicate_user_email() {
+        let repo = test_metadata().await;
+        let tenant = Tenant {
+            id: TenantId::new(),
+            name: "Dup Tenant".to_string(),
+            api_token: "tok-dup".to_string(),
+            plan: "free".to_string(),
+            created_at: Utc::now(),
+            config: serde_json::json!({}),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
+        };
+        repo.create_tenant(&tenant).await.unwrap();
+
+        let user = UserRecord {
+            id: Uuid::new_v4(),
+            tenant_id: tenant.id,
+            email: "dup@example.com".to_string(),
+            password_hash: Some("hash".to_string()),
+            display_name: "One".to_string(),
+            google_sub: None,
+            created_at: Utc::now(),
+        };
+        repo.create_user(&user).await.unwrap();
+
+        let dup = UserRecord {
+            id: Uuid::new_v4(),
+            tenant_id: tenant.id,
+            email: "DUP@example.com".to_string(),
+            password_hash: Some("hash2".to_string()),
+            display_name: "Two".to_string(),
+            google_sub: None,
+            created_at: Utc::now(),
+        };
+        assert!(repo.create_user(&dup).await.is_err());
     }
 
     #[tokio::test]

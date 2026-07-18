@@ -324,10 +324,16 @@ export default function TenantsClient() {
     },
   ];
 
+  const inputClass =
+    "rounded-xl border border-white/5 bg-card/50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary";
+  const panelClass = "rounded-2xl border border-white/5 bg-card/50";
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Tenants</h1>
+        <p className="text-sm text-muted-foreground">
+          Manage tenant isolation, tokens, and configuration
+        </p>
         <div className="flex gap-2">
           <Button variant="outline" onClick={loadTenants}>Refresh</Button>
           <Button onClick={() => setShowCreate(!showCreate)}>
@@ -350,7 +356,7 @@ export default function TenantsClient() {
             </CardHeader>
             <CardContent className="space-y-6 pt-6">
               {configSuccess && (
-                <div className="bg-success/10 border border-success/30 text-success p-3 rounded-md text-sm">
+                <div className="bg-success/10 border border-success/30 text-success p-3 rounded-xl text-sm">
                   Configuration saved successfully
                 </div>
               )}
@@ -365,7 +371,7 @@ export default function TenantsClient() {
                       type="text"
                       value={configName}
                       onChange={(e) => setConfigName(e.target.value)}
-                      className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                      className={`w-full ${inputClass}`}
                     />
                   </div>
                   <div className="space-y-2">
@@ -376,7 +382,7 @@ export default function TenantsClient() {
                       name="monitoring_scope"
                       value={configScope}
                       onChange={(e) => setConfigScope(e.target.value as any)}
-                      className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                      className={`w-full ${inputClass}`}
                     >
                       <option value="hybrid">Hybrid (Input + Output)</option>
                       <option value="input_only">Input Only</option>
@@ -396,7 +402,7 @@ export default function TenantsClient() {
                       placeholder="Unlimited"
                       value={configRateLimit}
                       onChange={(e) => setConfigRateLimit(e.target.value)}
-                      className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                      className={`w-full ${inputClass}`}
                     />
                   </div>
                   <div className="space-y-2">
@@ -410,7 +416,7 @@ export default function TenantsClient() {
                       placeholder="Unlimited"
                       value={configBudget}
                       onChange={(e) => setConfigBudget(e.target.value)}
-                      className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                      className={`w-full ${inputClass}`}
                     />
                   </div>
                 </div>
@@ -434,7 +440,7 @@ export default function TenantsClient() {
                       placeholder="Inherit global default"
                       value={configUpstreamUrl}
                       onChange={(e) => setConfigUpstreamUrl(e.target.value)}
-                      className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                      className={`w-full ${inputClass}`}
                     />
                   </div>
                   <div className="space-y-2">
@@ -454,7 +460,7 @@ export default function TenantsClient() {
                       placeholder={configUpstreamKeySet ? "Enter a new key to replace" : "Inherit global default"}
                       value={configUpstreamKey}
                       onChange={(e) => setConfigUpstreamKey(e.target.value)}
-                      className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                      className={`w-full ${inputClass}`}
                     />
                     <p className="text-[11px] text-muted-foreground">
                       Write-only. The stored secret is never displayed. Leave blank to keep the current key.
@@ -503,7 +509,7 @@ export default function TenantsClient() {
                 Use this token in your client headers as <code>X-LLMTrace-Token</code>.
               </p>
               {activeTenantKeys.apiToken ? (
-                <div className="flex items-center gap-2 rounded-md border bg-background p-2">
+                <div className={`flex items-center gap-2 ${panelClass} p-2`}>
                   <code className="flex-1 font-mono text-xs break-all">
                     <span data-testid="proxy-token-value">{activeTenantKeys.apiToken}</span>
                   </code>
@@ -518,7 +524,7 @@ export default function TenantsClient() {
                   </Button>
                 </div>
               ) : (
-                <div className="text-sm text-warning bg-warning/10 p-2 rounded-md border border-warning/30 flex items-center gap-2">
+                <div className="text-sm text-warning bg-warning/10 p-2 rounded-xl border border-warning/30 flex items-center gap-2">
                   <AlertTriangle className="h-4 w-4" />
                   No proxy token set. Click Reset to generate one.
                 </div>
@@ -531,7 +537,7 @@ export default function TenantsClient() {
                 <div
                   key={key.id}
                   data-testid={`api-key-row-${key.id}`}
-                  className="flex items-center justify-between rounded-md border bg-background p-3"
+                  className={`flex items-center justify-between ${panelClass} p-3`}
                 >
                   <div className="space-y-1">
                     <p className="text-sm font-medium">{key.name}</p>
@@ -557,7 +563,7 @@ export default function TenantsClient() {
                 name="role"
                 value={newKeyRole}
                 onChange={(e) => setNewKeyRole(e.target.value as any)}
-                className="rounded-md border bg-background px-3 py-1.5 text-sm"
+                className={`${inputClass} py-1.5`}
               >
                 <option value="admin">Admin</option>
                 <option value="operator">Operator</option>
@@ -582,7 +588,7 @@ export default function TenantsClient() {
             <p className="text-sm text-muted-foreground">
               Copy this token now. You will <strong>not</strong> be able to see it again!
             </p>
-            <div className="flex items-center gap-2 rounded-md border bg-background p-2">
+            <div className={`flex items-center gap-2 ${panelClass} p-2`}>
               <code className="flex-1 font-mono text-xs break-all">
                 {generatedKey.key}
               </code>
@@ -613,12 +619,12 @@ export default function TenantsClient() {
                 placeholder="Tenant name"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
-                className="flex-1 rounded-md border bg-background px-3 py-2 text-sm"
+                className={`flex-1 ${inputClass}`}
               />
               <select
                 value={newPlan}
                 onChange={(e) => setNewPlan(e.target.value)}
-                className="rounded-md border bg-background px-3 py-2 text-sm"
+                className={inputClass}
               >
                 <option value="default">Default</option>
                 <option value="free">Free</option>
@@ -638,7 +644,7 @@ export default function TenantsClient() {
                   placeholder="Inherit global default"
                   value={newUpstreamUrl}
                   onChange={(e) => setNewUpstreamUrl(e.target.value)}
-                  className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                  className={`w-full ${inputClass}`}
                 />
               </div>
               <div className="space-y-1">
@@ -652,7 +658,7 @@ export default function TenantsClient() {
                   placeholder="Inherit global default"
                   value={newUpstreamKey}
                   onChange={(e) => setNewUpstreamKey(e.target.value)}
-                  className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                  className={`w-full ${inputClass}`}
                 />
               </div>
             </div>

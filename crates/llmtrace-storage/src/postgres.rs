@@ -9,7 +9,7 @@
 use async_trait::async_trait;
 use llmtrace_core::{
     ApiKeyRecord, ApiKeyRole, AuditEvent, AuditQuery, LLMTraceError, MetadataRepository, Result,
-    Tenant, TenantConfig, TenantId,
+    Tenant, TenantConfig, TenantId, UserRecord, UserSessionRecord,
 };
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, Row};
@@ -582,12 +582,151 @@ impl MetadataRepository for PostgresMetadataRepository {
             .collect()
     }
 
+    async fn create_user(&self, user: &UserRecord) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO users (id, tenant_id, email, password_hash, display_name, google_sub, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind(user.id)
+        .bind(user.tenant_id.0)
+        .bind(user.email.to_lowercase())
+        .bind(user.password_hash.as_deref())
+        .bind(&user.display_name)
+        .bind(user.google_sub.as_deref())
+        .bind(user.created_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| LLMTraceError::Storage(format!("Failed to create user: {e}")))?;
+        Ok(())
+    }
+
+    async fn get_user_by_email(&self, email: &str) -> Result<Option<UserRecord>> {
+        let row = sqlx::query(
+            "SELECT id, tenant_id, email, password_hash, display_name, google_sub, created_at
+             FROM users WHERE LOWER(email) = LOWER($1)",
+        )
+        .bind(email)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| LLMTraceError::Storage(format!("Failed to look up user by email: {e}")))?;
+
+        Ok(row.map(|row| user_from_pg_row(&row)))
+    }
+
+    async fn get_user_by_id(&self, user_id: Uuid) -> Result<Option<UserRecord>> {
+        let row = sqlx::query(
+            "SELECT id, tenant_id, email, password_hash, display_name, google_sub, created_at
+             FROM users WHERE id = $1",
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| LLMTraceError::Storage(format!("Failed to look up user by id: {e}")))?;
+
+        Ok(row.map(|row| user_from_pg_row(&row)))
+    }
+
+    async fn get_user_by_google_sub(&self, google_sub: &str) -> Result<Option<UserRecord>> {
+        let row = sqlx::query(
+            "SELECT id, tenant_id, email, password_hash, display_name, google_sub, created_at
+             FROM users WHERE google_sub = $1",
+        )
+        .bind(google_sub)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| LLMTraceError::Storage(format!("Failed to look up user by google_sub: {e}")))?;
+
+        Ok(row.map(|row| user_from_pg_row(&row)))
+    }
+
+    async fn update_user(&self, user: &UserRecord) -> Result<()> {
+        let result = sqlx::query(
+            "UPDATE users SET password_hash = $2, display_name = $3, google_sub = $4
+             WHERE id = $1",
+        )
+        .bind(user.id)
+        .bind(user.password_hash.as_deref())
+        .bind(&user.display_name)
+        .bind(user.google_sub.as_deref())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| LLMTraceError::Storage(format!("Failed to update user: {e}")))?;
+
+        if result.rows_affected() == 0 {
+            return Err(LLMTraceError::Storage(format!(
+                "User {} not found",
+                user.id
+            )));
+        }
+        Ok(())
+    }
+
+    async fn create_user_session(&self, session: &UserSessionRecord) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO user_sessions (id, user_id, token_hash, expires_at, created_at)
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(session.id)
+        .bind(session.user_id)
+        .bind(&session.token_hash)
+        .bind(session.expires_at)
+        .bind(session.created_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| LLMTraceError::Storage(format!("Failed to create user session: {e}")))?;
+        Ok(())
+    }
+
+    async fn get_user_session_by_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<UserSessionRecord>> {
+        let row = sqlx::query(
+            "SELECT id, user_id, token_hash, expires_at, created_at
+             FROM user_sessions
+             WHERE token_hash = $1 AND expires_at > NOW()",
+        )
+        .bind(token_hash)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| LLMTraceError::Storage(format!("Failed to look up user session: {e}")))?;
+
+        Ok(row.map(|row| UserSessionRecord {
+            id: row.get("id"),
+            user_id: row.get("user_id"),
+            token_hash: row.get("token_hash"),
+            expires_at: row.get("expires_at"),
+            created_at: row.get("created_at"),
+        }))
+    }
+
+    async fn delete_user_session_by_hash(&self, token_hash: &str) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM user_sessions WHERE token_hash = $1")
+            .bind(token_hash)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| LLMTraceError::Storage(format!("Failed to delete user session: {e}")))?;
+        Ok(result.rows_affected() > 0)
+    }
+
     async fn health_check(&self) -> Result<()> {
         sqlx::query("SELECT 1")
             .fetch_one(&self.pool)
             .await
             .map_err(|e| LLMTraceError::Storage(format!("Health check failed: {e}")))?;
         Ok(())
+    }
+}
+
+fn user_from_pg_row(row: &sqlx::postgres::PgRow) -> UserRecord {
+    UserRecord {
+        id: row.get("id"),
+        tenant_id: TenantId(row.get::<Uuid, _>("tenant_id")),
+        email: row.get("email"),
+        password_hash: row.get("password_hash"),
+        display_name: row.get("display_name"),
+        google_sub: row.get("google_sub"),
+        created_at: row.get("created_at"),
     }
 }
 

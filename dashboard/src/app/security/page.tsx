@@ -42,6 +42,15 @@ const SEVERITY_CHIP_CLASSES: Record<string, string> = {
   info: "bg-severity-info/15 text-severity-info border-severity-info/30",
 };
 
+const CHART_TOOLTIP = {
+  contentStyle: {
+    backgroundColor: "hsl(var(--card))",
+    borderColor: "hsl(var(--border))",
+    borderRadius: "12px",
+  },
+  itemStyle: { color: "hsl(var(--foreground))" },
+};
+
 export default function SecurityPage() {
   const [findings, setFindings] = useState<PaginatedResponse<TraceSpan> | null>(null);
   const [loading, setLoading] = useState(true);
@@ -107,7 +116,7 @@ export default function SecurityPage() {
           return (
             <span
               key={f.id}
-              className={`mr-1 inline-flex items-center rounded border px-2 py-0.5 text-[10px] ${chipClass}`}
+              className={`mr-1 inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] ${chipClass}`}
             >
               {f.severity}: {f.finding_type}
             </span>
@@ -129,7 +138,9 @@ export default function SecurityPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-3xl font-bold">Security</h1>
+      <p className="text-sm text-muted-foreground">
+        Security findings distribution and flagged events
+      </p>
 
       <div className="grid gap-4 md:grid-cols-3">
         <StatCard
@@ -177,7 +188,7 @@ export default function SecurityPage() {
                       />
                     ))}
                   </Pie>
-                  <Tooltip />
+                  <Tooltip {...CHART_TOOLTIP} />
                 </PieChart>
               </ResponsiveContainer>
             ) : (
@@ -199,7 +210,7 @@ export default function SecurityPage() {
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" className="stroke-muted" />
                   <XAxis type="number" className="text-xs" />
                   <YAxis dataKey="name" type="category" width={150} className="text-xs" />
-                  <Tooltip />
+                  <Tooltip {...CHART_TOOLTIP} />
                   <Bar dataKey="count" fill="hsl(var(--severity-high))" radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>

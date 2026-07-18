@@ -1169,6 +1169,21 @@ fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/auth/keys/:id",
             delete(llmtrace_proxy::auth::revoke_api_key),
         )
+        // Dashboard user auth (signup / login / session / Google OAuth)
+        .route(
+            "/api/v1/auth/signup",
+            post(llmtrace_proxy::user_auth::signup),
+        )
+        .route("/api/v1/auth/login", post(llmtrace_proxy::user_auth::login))
+        .route(
+            "/api/v1/auth/logout",
+            post(llmtrace_proxy::user_auth::logout),
+        )
+        .route("/api/v1/auth/me", get(llmtrace_proxy::user_auth::me))
+        .route(
+            "/api/v1/auth/oauth/google",
+            post(llmtrace_proxy::user_auth::google_oauth),
+        )
         // Audit log API
         .route(
             "/api/v1/audit",

@@ -10,14 +10,11 @@ const OPENAPI_JSON_URL = "/api/proxy/api-doc/openapi.json";
 export default function ApiDocsPage() {
   return (
     <div className="space-y-6">
-      <div className="space-y-2">
-        <h1 className="text-3xl font-bold">API Endpoints</h1>
-        <p className="text-sm text-muted-foreground">
-          Interactive OpenAPI documentation served by the LLMTrace proxy. Use the operator
-          API key when calling endpoints from your own apps; see the Tenants page for how to
-          obtain one.
-        </p>
-      </div>
+      <p className="text-sm text-muted-foreground">
+        Interactive OpenAPI documentation served by the LLMTrace proxy. Use the operator
+        API key when calling endpoints from your own apps; see the Tenants page for how to
+        obtain one.
+      </p>
 
       <Card>
         <CardHeader>
@@ -45,12 +42,12 @@ export default function ApiDocsPage() {
             </span>
           </div>
 
-          <div className="rounded-md border">
+          <div className="overflow-hidden rounded-2xl border border-white/5 bg-card/50">
             <iframe
               title="LLMTrace Swagger UI"
               src={SWAGGER_UI_URL}
               data-testid="api-docs-swagger-iframe"
-              className="h-[70vh] w-full rounded-md"
+              className="h-[70vh] w-full"
             />
           </div>
         </CardContent>

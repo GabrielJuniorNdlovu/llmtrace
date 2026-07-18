@@ -18,11 +18,11 @@ export function LoadingOverlay({
   const clamped = Math.max(0, Math.min(100, progressPct));
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/95 backdrop-blur-sm">
-      <div className="w-full max-w-lg rounded-xl border bg-card p-8 shadow-xl">
-        <div className="mb-4 flex items-center gap-3">
-          <div className="relative rounded-lg bg-muted p-2">
-            <Shield className="h-6 w-6 text-success" />
-            <Loader2 className="absolute -right-2 -top-2 h-4 w-4 animate-spin text-success" />
+      <div className="w-full max-w-lg rounded-3xl border border-white/5 bg-card p-8 shadow-xl">
+        <div className="mb-6 flex items-center gap-3">
+          <div className="relative rounded-2xl bg-primary/15 p-3">
+            <Shield className="h-6 w-6 text-primary" />
+            <Loader2 className="absolute -right-2 -top-2 h-4 w-4 animate-spin text-primary" />
           </div>
           <div>
             <h2 className="text-lg font-semibold">Bootstrapping Security Engines</h2>
@@ -34,7 +34,7 @@ export function LoadingOverlay({
 
         <div className="mb-2 h-2 w-full overflow-hidden rounded-full bg-muted">
           <div
-            className="h-full rounded-full bg-success transition-all duration-500"
+            className="h-full rounded-full bg-primary transition-all duration-500 shadow-[0_0_12px_rgba(157,78,221,0.5)]"
             style={{ width: `${clamped}%` }}
           />
         </div>

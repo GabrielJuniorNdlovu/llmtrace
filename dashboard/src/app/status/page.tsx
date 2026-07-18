@@ -80,7 +80,7 @@ function parseMetricSamples(preview: string): MetricSample[] {
 function renderEndpointBody(item: EndpointCheck) {
   if (item.error) {
     return (
-      <pre className="max-h-56 overflow-auto rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
+      <pre className="max-h-56 overflow-auto rounded-2xl border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
         {item.error}
       </pre>
     );
@@ -88,7 +88,7 @@ function renderEndpointBody(item: EndpointCheck) {
 
   if (!item.preview) {
     return (
-      <pre className="max-h-56 overflow-auto rounded-md border bg-muted/30 p-3 text-xs">
+      <pre className="max-h-56 overflow-auto rounded-2xl border border-white/5 bg-card/50 p-3 text-xs">
         No response yet.
       </pre>
     );
@@ -100,7 +100,7 @@ function renderEndpointBody(item: EndpointCheck) {
 
   if (isJson) {
     return (
-      <pre className="max-h-56 overflow-auto rounded-md border bg-muted/30 p-3 text-xs">
+      <pre className="max-h-56 overflow-auto rounded-2xl border border-white/5 bg-card/50 p-3 text-xs">
         {formatJsonPreview(item.preview)}
       </pre>
     );
@@ -110,7 +110,7 @@ function renderEndpointBody(item: EndpointCheck) {
     const samples = parseMetricSamples(item.preview);
     return (
       <div className="space-y-3">
-        <div className="rounded-md border bg-background/60 p-3">
+        <div className="rounded-2xl border border-white/5 bg-card/50 p-3">
           <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Top Signals
           </div>
@@ -134,7 +134,7 @@ function renderEndpointBody(item: EndpointCheck) {
             </div>
           )}
         </div>
-        <pre className="max-h-56 overflow-auto rounded-md border bg-muted/30 p-3 text-xs">
+        <pre className="max-h-56 overflow-auto rounded-2xl border border-white/5 bg-card/50 p-3 text-xs">
           {item.preview}
         </pre>
       </div>
@@ -142,7 +142,7 @@ function renderEndpointBody(item: EndpointCheck) {
   }
 
   return (
-    <pre className="max-h-56 overflow-auto rounded-md border bg-muted/30 p-3 text-xs">
+    <pre className="max-h-56 overflow-auto rounded-2xl border border-white/5 bg-card/50 p-3 text-xs">
       {item.preview}
     </pre>
   );
@@ -202,12 +202,9 @@ export default function StatusPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Status</h1>
-          <p className="text-sm text-muted-foreground">
-            Central place for health and metrics endpoints.
-          </p>
-        </div>
+        <p className="text-sm text-muted-foreground">
+          Central place for health and metrics endpoints.
+        </p>
         <Button variant="outline" onClick={runChecks} disabled={refreshing}>
           <RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
           Refresh

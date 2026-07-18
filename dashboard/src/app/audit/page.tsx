@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ScrollText, RefreshCw, AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
+import { RefreshCw, AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -44,7 +44,7 @@ function DataCell({ value }: { value: unknown }) {
       {open && (
         <pre
           data-testid="audit-data-payload"
-          className="mt-2 max-h-60 overflow-auto rounded-md border bg-muted/30 p-2 text-[11px] leading-relaxed"
+          className="mt-2 max-h-60 overflow-auto rounded-2xl border border-white/5 bg-card/50 p-2 text-[11px] leading-relaxed"
         >
           {json}
         </pre>
@@ -151,14 +151,9 @@ export default function AuditPage() {
   return (
     <div className="space-y-6 max-w-6xl mx-auto pb-12">
       <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-            <ScrollText className="h-7 w-7 text-primary" /> Audit
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Tenant-scoped audit events: tenant CRUD, API key mint/revoke, config changes, etc.
-          </p>
-        </div>
+        <p className="text-sm text-muted-foreground">
+          Tenant-scoped audit events: tenant CRUD, API key mint/revoke, config changes, etc.
+        </p>
         <Button
           variant="outline"
           onClick={() => load(tenantId, { limit: PAGE_SIZE, offset })}
@@ -191,7 +186,7 @@ export default function AuditPage() {
                 if (e.key === "Enter") handleFilterApply();
               }}
               placeholder="tenant_created"
-              className="h-9 w-56 rounded-md border border-input bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary"
+              className="h-9 w-56 rounded-xl border border-white/5 bg-card/50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
             />
           </div>
           <Button onClick={handleFilterApply} disabled={loading} size="sm" className="h-9">
@@ -245,7 +240,7 @@ export default function AuditPage() {
         </CardHeader>
         <CardContent>
           {error && (
-            <div className="mb-4 flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            <div className="mb-4 flex items-center gap-2 rounded-2xl border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
               <AlertTriangle className="h-4 w-4" />
               <span data-testid="audit-error">{error}</span>
             </div>

@@ -58,9 +58,10 @@ export default function TraceDetailPage(props: {
             <ArrowLeft className="mr-2 h-4 w-4" /> Back
           </Button>
         </Link>
-        <h1 className="text-2xl font-bold">
-          Trace <span className="font-mono text-lg">{trace.trace_id.slice(0, 12)}…</span>
-        </h1>
+        <p className="text-sm text-muted-foreground">
+          Trace{" "}
+          <span className="font-mono">{trace.trace_id.slice(0, 12)}…</span>
+        </p>
       </div>
 
       {/* Summary */}
@@ -86,7 +87,7 @@ export default function TraceDetailPage(props: {
             <CardTitle className="text-sm font-medium">Spans</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold">{trace.spans.length}</p>
+            <p className="text-2xl font-semibold">{trace.spans.length}</p>
           </CardContent>
         </Card>
       </div>
@@ -169,13 +170,13 @@ export default function TraceDetailPage(props: {
               </TabsContent>
 
               <TabsContent value="prompt" className="pt-4">
-                <pre className="max-h-96 overflow-auto rounded-md bg-muted p-4 text-xs">
+                <pre className="max-h-96 overflow-auto rounded-2xl border border-white/5 bg-card/50 p-4 text-xs">
                   {span.prompt || "No prompt captured"}
                 </pre>
               </TabsContent>
 
               <TabsContent value="response" className="pt-4">
-                <pre className="max-h-96 overflow-auto rounded-md bg-muted p-4 text-xs">
+                <pre className="max-h-96 overflow-auto rounded-2xl border border-white/5 bg-card/50 p-4 text-xs">
                   {span.response || "No response captured"}
                 </pre>
               </TabsContent>
@@ -183,7 +184,7 @@ export default function TraceDetailPage(props: {
               {(span.security_findings?.length ?? 0) > 0 && (
                 <TabsContent value="security" className="space-y-3 pt-4">
                   {span.security_findings.map((f) => (
-                    <div key={f.id} className="rounded-md border p-3">
+                    <div key={f.id} className="rounded-2xl border border-white/5 bg-card/50 p-3">
                       <div className="flex items-center gap-2">
                         <Badge
                           variant={
@@ -209,7 +210,7 @@ export default function TraceDetailPage(props: {
               {(span.agent_actions?.length ?? 0) > 0 && (
                 <TabsContent value="actions" className="space-y-3 pt-4">
                   {span.agent_actions.map((a) => (
-                    <div key={a.id} className="rounded-md border p-3">
+                    <div key={a.id} className="rounded-2xl border border-white/5 bg-card/50 p-3">
                       <div className="flex items-center gap-2">
                         <Badge variant="outline">{a.action_type}</Badge>
                         <span className="text-sm font-medium">{a.name}</span>
@@ -223,7 +224,7 @@ export default function TraceDetailPage(props: {
                         )}
                       </div>
                       {a.arguments && (
-                        <pre className="mt-2 max-h-32 overflow-auto rounded bg-muted p-2 text-xs">
+                        <pre className="mt-2 max-h-32 overflow-auto rounded-xl border border-white/5 bg-card/50 p-2 text-xs">
                           {a.arguments}
                         </pre>
                       )}

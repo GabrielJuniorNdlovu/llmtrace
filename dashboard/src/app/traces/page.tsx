@@ -163,9 +163,14 @@ export default function TracesPage() {
     },
   ];
 
+  const inputClass =
+    "rounded-xl border border-white/5 bg-card/50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary";
+
   return (
     <div className="space-y-6">
-      <h1 className="text-3xl font-bold">Traces</h1>
+      <p className="text-sm text-muted-foreground">
+        Filter and browse LLM request traces
+      </p>
 
       {/* Filters */}
       <Card>
@@ -184,7 +189,7 @@ export default function TracesPage() {
                   setProvider(e.target.value);
                   setOffset(0);
                 }}
-                className="rounded-md border bg-background px-3 py-2 text-sm"
+                className={inputClass}
               />
             </div>
             <div className="flex flex-col gap-1">
@@ -197,7 +202,7 @@ export default function TracesPage() {
                   setModel(e.target.value);
                   setOffset(0);
                 }}
-                className="rounded-md border bg-background px-3 py-2 text-sm"
+                className={inputClass}
               />
             </div>
             <div className="flex flex-col gap-1">
@@ -210,7 +215,7 @@ export default function TracesPage() {
                   setTraceIdFilter(e.target.value);
                   setOffset(0);
                 }}
-                className="rounded-md border bg-background px-3 py-2 text-sm font-mono"
+                className={`${inputClass} font-mono`}
               />
             </div>
             <div className="flex flex-col gap-1">
@@ -222,7 +227,7 @@ export default function TracesPage() {
                   setDateFilter(e.target.value);
                   setOffset(0);
                 }}
-                className="rounded-md border bg-background px-3 py-2 text-sm"
+                className={inputClass}
               />
             </div>
           </div>

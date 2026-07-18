@@ -1,156 +1,54 @@
 "use client";
 
-import { Suspense, useEffect, useState, type FormEvent } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { Shield } from "lucide-react";
+import { Suspense } from "react";
+import { AuthForm } from "./components/auth-form";
 
-function LoginForm(): React.ReactElement {
-  const router = useRouter();
-  const search = useSearchParams();
-  const next = search.get("next") || "/";
-  const [username, setUsername] = useState("");
-  const [adminKey, setAdminKey] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
-
-  // Pre-fill the identifier field with the seeded value so operators don't
-  // have to guess. The seeded value is a free string — it may be an email,
-  // a username, or any other identifier the app chose to seed. The library
-  // does not validate format. Identifier is a low-secrecy field (the admin
-  // key is the real secret), so exposing it via /api/auth/identity is
-  // acceptable and avoids friction. Field stays editable in case the
-  // operator wants to confirm by typing.
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/auth/identity", { cache: "no-store" })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((body: { username?: string } | null) => {
-        if (cancelled || !body?.username) return;
-        setUsername(body.username);
-      })
-      .catch(() => {
-        // Identity hint is non-critical; on failure the operator just types
-        // the username manually.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // A failed/expired one-click sign-in bounces here with ?error=sso. Surface a
-  // clear reason rather than leaving the form silently waiting.
-  useEffect(() => {
-    if (search.get("error") === "sso") {
-      setError("That one-click sign-in link has expired or is invalid. Please sign in with your admin key.");
-    }
-  }, [search]);
-
-  async function onSubmit(e: FormEvent<HTMLFormElement>): Promise<void> {
-    e.preventDefault();
-    if (!username || !adminKey) {
-      setError("Email or username and admin key are required");
-      return;
-    }
-    setError(null);
-    setPending(true);
-    try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, admin_key: adminKey }),
-      });
-      if (res.ok) {
-        router.replace(next);
-        router.refresh();
-        return;
-      }
-      const body = (await res.json().catch(() => null)) as { error?: string } | null;
-      setError(body?.error ?? `Login failed (${res.status})`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed");
-    } finally {
-      setPending(false);
-    }
-  }
-
+function LoginContent(): React.ReactElement {
   return (
-    <form
-      onSubmit={onSubmit}
-      className="w-full max-w-sm space-y-6 rounded-lg border bg-card p-8 shadow-sm"
-    >
-      <div className="flex flex-col items-center gap-2">
-        <Shield className="h-8 w-8 text-primary" />
-        <h1 className="text-xl font-semibold">LLMTrace Dashboard</h1>
-        <p className="text-sm text-muted-foreground">
-          Sign in with the credentials seeded at deployment time
-        </p>
+    <div className="grid min-h-[100dvh] bg-background lg:grid-cols-2">
+      <div className="relative hidden flex-col justify-between overflow-hidden bg-zinc-950 p-10 text-white lg:flex">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(157,78,221,0.35),transparent_45%),radial-gradient(circle_at_80%_70%,rgba(245,158,11,0.2),transparent_40%),linear-gradient(160deg,#0a0a0a_0%,#1a1028_55%,#0a0a0a_100%)]" />
+        <div className="relative z-10 flex w-full items-center justify-between">
+          <div className="text-2xl font-bold tracking-tighter text-primary">
+            lt
+          </div>
+          <a
+            href="https://llmtrace.dev"
+            className="flex items-center gap-2 rounded-full bg-white/10 px-4 py-1.5 text-sm font-medium backdrop-blur-sm transition-colors hover:text-white/80"
+          >
+            Back to website
+            <span aria-hidden="true">&rarr;</span>
+          </a>
+        </div>
+        <div className="relative z-10 mx-auto mb-10 w-full max-w-md text-center">
+          <h1 className="text-balance text-4xl font-medium leading-[1.1] tracking-tight md:text-5xl">
+            Secure observability for every LLM request
+          </h1>
+          <p className="mt-4 text-sm text-white/70">
+            Trace prompts, enforce safety, and control cost — between your app
+            and the model provider.
+          </p>
+          <div className="mt-8 flex justify-center gap-2">
+            <span className="h-1 w-8 rounded-full bg-white/30" />
+            <span className="h-1 w-8 rounded-full bg-white/30" />
+            <span className="h-1 w-8 rounded-full bg-primary" />
+          </div>
+        </div>
       </div>
 
-      <div className="space-y-2">
-        <label htmlFor="username" className="text-sm font-medium">
-          Email or username
-        </label>
-        <input
-          id="username"
-          name="username"
-          type="text"
-          autoComplete="username"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-          data-testid="login-username"
-        />
+      <div className="flex items-center justify-center p-6 sm:p-10 lg:p-16">
+        <div className="w-full max-w-[400px]">
+          <AuthForm />
+        </div>
       </div>
-
-      <div className="space-y-2">
-        <label htmlFor="admin_key" className="text-sm font-medium">
-          Admin key
-        </label>
-        <input
-          id="admin_key"
-          name="admin_key"
-          type="password"
-          autoComplete="current-password"
-          autoFocus
-          value={adminKey}
-          onChange={(e) => setAdminKey(e.target.value)}
-          className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-          data-testid="login-admin-key"
-        />
-      </div>
-
-      {error && (
-        <p
-          role="alert"
-          className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"
-          data-testid="login-error"
-        >
-          {error}
-        </p>
-      )}
-
-      <button
-        type="submit"
-        disabled={pending}
-        className="w-full rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
-        data-testid="login-submit"
-      >
-        {pending ? "Signing in..." : "Sign in"}
-      </button>
-
-      <p className="text-center text-xs text-muted-foreground">
-        Rotate the admin key via the <code>rotate-admin-key</code> workflow.
-      </p>
-    </form>
+    </div>
   );
 }
 
 export default function LoginPage(): React.ReactElement {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <Suspense fallback={null}>
-        <LoginForm />
-      </Suspense>
-    </div>
+    <Suspense fallback={null}>
+      <LoginContent />
+    </Suspense>
   );
 }

@@ -130,6 +130,50 @@ pub struct AuthContext {
     pub role: ApiKeyRole,
     /// ID of the API key used (`None` for bootstrap admin key).
     pub key_id: Option<Uuid>,
+    /// Dashboard user ID when authenticated via a user session token.
+    pub user_id: Option<Uuid>,
+}
+
+/// A dashboard user account bound to a dedicated tenant.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UserRecord {
+    /// Unique user identifier.
+    #[schema(value_type = String, format = "uuid")]
+    pub id: Uuid,
+    /// Tenant owned by this user (created at signup).
+    pub tenant_id: TenantId,
+    /// Lowercased email address (unique).
+    pub email: String,
+    /// Argon2id password hash (`None` for Google-only accounts).
+    #[serde(skip_serializing)]
+    pub password_hash: Option<String>,
+    /// Display name shown in the UI.
+    pub display_name: String,
+    /// Google OIDC `sub` claim when linked (`None` for password-only users).
+    #[serde(skip_serializing)]
+    pub google_sub: Option<String>,
+    /// When the account was created.
+    #[schema(value_type = String, format = "date-time")]
+    pub created_at: DateTime<Utc>,
+}
+
+/// An opaque login session for a dashboard user.
+///
+/// Only the SHA-256 hash of the session token is persisted. The plaintext
+/// token (prefix `llmts_`) is returned once at login/signup.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserSessionRecord {
+    /// Unique session identifier.
+    pub id: Uuid,
+    /// Owning user.
+    pub user_id: Uuid,
+    /// SHA-256 hex digest of the plaintext session token.
+    #[serde(skip_serializing)]
+    pub token_hash: String,
+    /// Absolute expiry timestamp.
+    pub expires_at: DateTime<Utc>,
+    /// When the session was created.
+    pub created_at: DateTime<Utc>,
 }
 
 /// Tenant scope for an authenticated request, derived from headers.
@@ -3513,6 +3557,75 @@ pub trait MetadataRepository: Send + Sync {
 
     /// Revoke an API key by setting its `revoked_at` timestamp.
     async fn revoke_api_key(&self, key_id: Uuid) -> Result<bool>;
+
+    // -- User accounts & sessions --------------------------------------------
+
+    /// Persist a new dashboard user.
+    async fn create_user(&self, user: &UserRecord) -> Result<()> {
+        let _ = user;
+        Err(crate::LLMTraceError::Storage(
+            "user accounts are not supported by this storage backend".to_string(),
+        ))
+    }
+
+    /// Look up a user by lowercased email address.
+    async fn get_user_by_email(&self, email: &str) -> Result<Option<UserRecord>> {
+        let _ = email;
+        Err(crate::LLMTraceError::Storage(
+            "user accounts are not supported by this storage backend".to_string(),
+        ))
+    }
+
+    /// Look up a user by primary key.
+    async fn get_user_by_id(&self, user_id: Uuid) -> Result<Option<UserRecord>> {
+        let _ = user_id;
+        Err(crate::LLMTraceError::Storage(
+            "user accounts are not supported by this storage backend".to_string(),
+        ))
+    }
+
+    /// Look up a user by Google OIDC `sub` claim.
+    async fn get_user_by_google_sub(&self, google_sub: &str) -> Result<Option<UserRecord>> {
+        let _ = google_sub;
+        Err(crate::LLMTraceError::Storage(
+            "user accounts are not supported by this storage backend".to_string(),
+        ))
+    }
+
+    /// Update mutable user fields (password hash, display name, google_sub).
+    async fn update_user(&self, user: &UserRecord) -> Result<()> {
+        let _ = user;
+        Err(crate::LLMTraceError::Storage(
+            "user accounts are not supported by this storage backend".to_string(),
+        ))
+    }
+
+    /// Persist a new opaque login session (token hash only).
+    async fn create_user_session(&self, session: &UserSessionRecord) -> Result<()> {
+        let _ = session;
+        Err(crate::LLMTraceError::Storage(
+            "user sessions are not supported by this storage backend".to_string(),
+        ))
+    }
+
+    /// Look up a non-expired session by token hash.
+    async fn get_user_session_by_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<UserSessionRecord>> {
+        let _ = token_hash;
+        Err(crate::LLMTraceError::Storage(
+            "user sessions are not supported by this storage backend".to_string(),
+        ))
+    }
+
+    /// Delete a session by token hash (logout / revoke).
+    async fn delete_user_session_by_hash(&self, token_hash: &str) -> Result<bool> {
+        let _ = token_hash;
+        Err(crate::LLMTraceError::Storage(
+            "user sessions are not supported by this storage backend".to_string(),
+        ))
+    }
 
     // -- Compliance report persistence ---------------------------------------
 

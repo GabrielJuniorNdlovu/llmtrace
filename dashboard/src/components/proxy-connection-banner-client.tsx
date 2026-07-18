@@ -70,7 +70,7 @@ function ProxyUrlRow({ proxyUrl, copied, onCopy }: ProxyUrlRowProps): ReactEleme
   return (
     <div className="space-y-1">
       <p className="text-xs font-medium text-muted-foreground">Proxy URL</p>
-      <div className="flex items-center gap-2 rounded-md border bg-background p-2">
+      <div className="flex items-center gap-2 rounded-2xl border border-white/5 bg-card/50 p-2">
         <code
           className="flex-1 break-all font-mono text-sm"
           data-testid="proxy-url-value"
@@ -124,7 +124,7 @@ function ProxyCurlBlock({ curl, copied, onCopy }: ProxyCurlBlockProps): ReactEle
         </Button>
       </div>
       <pre
-        className="overflow-x-auto rounded-md border bg-background p-3 text-xs"
+        className="overflow-x-auto rounded-2xl border border-white/5 bg-card/50 p-3 text-xs"
         data-testid="proxy-curl-example"
       >
         <code className="font-mono">{curl}</code>

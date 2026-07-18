@@ -6,7 +6,8 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use llmtrace_core::{
     ApiKeyRecord, AuditEvent, AuditQuery, LLMTraceError, MetadataRepository, Result, StorageStats,
-    Tenant, TenantConfig, TenantId, TraceEvent, TraceQuery, TraceRepository, TraceSpan,
+    Tenant, TenantConfig, TenantId, TraceEvent, TraceQuery, TraceRepository, TraceSpan, UserRecord,
+    UserSessionRecord,
 };
 use tokio::sync::RwLock;
 use uuid::Uuid;
@@ -406,6 +407,8 @@ pub struct InMemoryMetadataRepository {
     audit_events: RwLock<Vec<AuditEvent>>,
     api_keys: RwLock<Vec<ApiKeyRecord>>,
     reports: RwLock<Vec<llmtrace_core::ComplianceReportRecord>>,
+    users: RwLock<Vec<UserRecord>>,
+    sessions: RwLock<Vec<UserSessionRecord>>,
 }
 
 impl InMemoryMetadataRepository {
@@ -417,6 +420,8 @@ impl InMemoryMetadataRepository {
             audit_events: RwLock::new(Vec::new()),
             api_keys: RwLock::new(Vec::new()),
             reports: RwLock::new(Vec::new()),
+            users: RwLock::new(Vec::new()),
+            sessions: RwLock::new(Vec::new()),
         }
     }
 }
@@ -617,6 +622,91 @@ impl MetadataRepository for InMemoryMetadataRepository {
         }
 
         Ok(results)
+    }
+
+    async fn create_user(&self, user: &UserRecord) -> Result<()> {
+        let mut users = self.users.write().await;
+        let email = user.email.to_lowercase();
+        if users.iter().any(|u| u.email == email) {
+            return Err(LLMTraceError::Storage(format!(
+                "User with email {email} already exists"
+            )));
+        }
+        if let Some(ref sub) = user.google_sub {
+            if users.iter().any(|u| u.google_sub.as_deref() == Some(sub)) {
+                return Err(LLMTraceError::Storage(format!(
+                    "User with google_sub {sub} already exists"
+                )));
+            }
+        }
+        let mut stored = user.clone();
+        stored.email = email;
+        users.push(stored);
+        Ok(())
+    }
+
+    async fn get_user_by_email(&self, email: &str) -> Result<Option<UserRecord>> {
+        let users = self.users.read().await;
+        let needle = email.to_lowercase();
+        Ok(users.iter().find(|u| u.email == needle).cloned())
+    }
+
+    async fn get_user_by_id(&self, user_id: Uuid) -> Result<Option<UserRecord>> {
+        let users = self.users.read().await;
+        Ok(users.iter().find(|u| u.id == user_id).cloned())
+    }
+
+    async fn get_user_by_google_sub(&self, google_sub: &str) -> Result<Option<UserRecord>> {
+        let users = self.users.read().await;
+        Ok(users
+            .iter()
+            .find(|u| u.google_sub.as_deref() == Some(google_sub))
+            .cloned())
+    }
+
+    async fn update_user(&self, user: &UserRecord) -> Result<()> {
+        let mut users = self.users.write().await;
+        if let Some(existing) = users.iter_mut().find(|u| u.id == user.id) {
+            existing.password_hash = user.password_hash.clone();
+            existing.display_name = user.display_name.clone();
+            existing.google_sub = user.google_sub.clone();
+            Ok(())
+        } else {
+            Err(LLMTraceError::Storage(format!(
+                "User {} not found",
+                user.id
+            )))
+        }
+    }
+
+    async fn create_user_session(&self, session: &UserSessionRecord) -> Result<()> {
+        let mut sessions = self.sessions.write().await;
+        if sessions.iter().any(|s| s.token_hash == session.token_hash) {
+            return Err(LLMTraceError::Storage(
+                "Session token hash already exists".to_string(),
+            ));
+        }
+        sessions.push(session.clone());
+        Ok(())
+    }
+
+    async fn get_user_session_by_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<UserSessionRecord>> {
+        let mut sessions = self.sessions.write().await;
+        sessions.retain(|s| s.expires_at > Utc::now());
+        Ok(sessions
+            .iter()
+            .find(|s| s.token_hash == token_hash)
+            .cloned())
+    }
+
+    async fn delete_user_session_by_hash(&self, token_hash: &str) -> Result<bool> {
+        let mut sessions = self.sessions.write().await;
+        let before = sessions.len();
+        sessions.retain(|s| s.token_hash != token_hash);
+        Ok(sessions.len() < before)
     }
 
     async fn health_check(&self) -> Result<()> {

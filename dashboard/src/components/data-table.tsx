@@ -33,11 +33,15 @@ export function DataTable<T>({
 
     const column = columns[sortConfig.key];
     const sortable = [...data].sort((a, b) => {
-      let aValue = column.sortKey 
-        ? (typeof column.sortKey === 'function' ? column.sortKey(a) : a[column.sortKey])
+      let aValue = column.sortKey
+        ? typeof column.sortKey === "function"
+          ? column.sortKey(a)
+          : a[column.sortKey]
         : null;
-      let bValue = column.sortKey 
-        ? (typeof column.sortKey === 'function' ? column.sortKey(b) : b[column.sortKey])
+      let bValue = column.sortKey
+        ? typeof column.sortKey === "function"
+          ? column.sortKey(b)
+          : b[column.sortKey]
         : null;
 
       if (aValue === bValue) return 0;
@@ -62,22 +66,24 @@ export function DataTable<T>({
 
   if (data.length === 0) {
     return (
-      <div className="flex items-center justify-center rounded-md border p-8 text-sm text-muted-foreground">
+      <div className="flex items-center justify-center rounded-2xl border border-white/5 bg-card/50 p-8 text-sm text-muted-foreground">
         {emptyMessage}
       </div>
     );
   }
 
   return (
-    <div className="rounded-md border">
+    <div className="overflow-hidden rounded-2xl border border-white/5 bg-card/50">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b bg-muted/50">
+          <tr className="border-b border-white/5 bg-muted/30">
             {columns.map((col, i) => (
               <th
                 key={i}
                 className={`px-4 py-3 text-left font-medium text-muted-foreground ${col.className ?? ""} ${
-                  col.sortKey ? "cursor-pointer select-none hover:text-foreground" : ""
+                  col.sortKey
+                    ? "cursor-pointer select-none hover:text-foreground"
+                    : ""
                 }`}
                 onClick={() => col.sortKey && requestSort(i)}
               >
@@ -86,9 +92,13 @@ export function DataTable<T>({
                   {col.sortKey && (
                     <span className="text-muted-foreground/50">
                       {sortConfig.key === i ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="h-3 w-3" /> : 
-                        sortConfig.direction === "desc" ? <ArrowDown className="h-3 w-3" /> : 
-                        <ArrowUpDown className="h-3 w-3" />
+                        sortConfig.direction === "asc" ? (
+                          <ArrowUp className="h-3 w-3" />
+                        ) : sortConfig.direction === "desc" ? (
+                          <ArrowDown className="h-3 w-3" />
+                        ) : (
+                          <ArrowUpDown className="h-3 w-3" />
+                        )
                       ) : (
                         <ArrowUpDown className="h-3 w-3" />
                       )}
@@ -104,7 +114,9 @@ export function DataTable<T>({
             <tr
               key={i}
               onClick={() => onRowClick?.(row)}
-              className={`border-b transition-colors hover:bg-muted/50 ${onRowClick ? "cursor-pointer" : ""}`}
+              className={`border-b border-white/5 transition-colors last:border-0 hover:bg-white/[0.03] ${
+                onRowClick ? "cursor-pointer" : ""
+              }`}
             >
               {columns.map((col, j) => (
                 <td key={j} className={`px-4 py-3 ${col.className ?? ""}`}>

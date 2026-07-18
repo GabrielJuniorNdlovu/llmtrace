@@ -3,11 +3,10 @@
 import { useEffect, useState } from "react";
 import { Activity, Shield, DollarSign, AlertTriangle } from "lucide-react";
 import {
-  BarChart,
-  Bar,
+  AreaChart,
+  Area,
   XAxis,
   YAxis,
-  CartesianGrid,
   Tooltip,
   ResponsiveContainer,
   PieChart,
@@ -20,11 +19,9 @@ import { Badge } from "@/components/ui/badge";
 import {
   type StorageStats,
   type TraceSpan,
-  type TraceEvent,
   type PaginatedResponse,
   getStats,
   listSecurityFindings,
-  listTenants,
   listTraces,
   findActiveTenant,
   getGlobalStats,
@@ -56,7 +53,6 @@ export default function OverviewPage() {
   useEffect(() => {
     async function load() {
       try {
-        // Find the tenant with the most activity to display meaningful data
         const tenantId = await findActiveTenant();
 
         const [statsRes, findingsRes, tracesRes, globalRes] = await Promise.all([
@@ -69,21 +65,19 @@ export default function OverviewPage() {
         setGlobalStats(globalRes);
         setFindings(findingsRes);
 
-        // Aggregate trace activity (last 24h)
         const now = new Date();
         const buckets = new Map<string, number>();
-        
-        // Initialize buckets for the last 6 hours (example)
+
         for (let i = 5; i >= 0; i--) {
           const d = new Date(now.getTime() - i * 60 * 60 * 1000);
-          const key = `${d.getHours().toString().padStart(2, '0')}:00`;
+          const key = `${d.getHours().toString().padStart(2, "0")}:00`;
           buckets.set(key, 0);
         }
 
         if (tracesRes?.data) {
           for (const trace of tracesRes.data) {
             const date = new Date(trace.created_at);
-            const key = `${date.getHours().toString().padStart(2, '0')}:00`;
+            const key = `${date.getHours().toString().padStart(2, "0")}:00`;
             if (buckets.has(key)) {
               buckets.set(key, (buckets.get(key) ?? 0) + 1);
             }
@@ -95,19 +89,16 @@ export default function OverviewPage() {
           traces,
         }));
         setActivityData(aggregated);
-
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load data");
       }
     }
     load();
-    
-    // Auto-refresh every 30 seconds
+
     const interval = setInterval(load, 30000);
     return () => clearInterval(interval);
   }, []);
 
-  // Build severity breakdown from findings
   const severityCounts: Record<string, number> = {};
   if (findings?.data) {
     for (const span of findings.data) {
@@ -121,21 +112,22 @@ export default function OverviewPage() {
     value,
   }));
 
-  const anomalies = findings?.data?.flatMap(s => s.security_findings || [])
-    .filter(f => f.finding_type.startsWith("anomaly_")) || [];
+  const anomalies =
+    findings?.data
+      ?.flatMap((s) => s.security_findings || [])
+      .filter((f) => f.finding_type.startsWith("anomaly_")) || [];
 
   if (error) {
     return (
       <div className="space-y-6">
-        <h1 className="text-3xl font-bold">Overview</h1>
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-            <AlertTriangle className="mb-2 h-8 w-8" />
+            <AlertTriangle className="mb-2 h-8 w-8 text-warning" />
             <p className="text-sm">Could not connect to the LLMTrace API</p>
-            <p className="text-xs mt-1">{error}</p>
-            <p className="text-xs mt-2">
+            <p className="mt-1 text-xs">{error}</p>
+            <p className="mt-2 text-xs">
               Ensure the proxy is running and{" "}
-              <code className="bg-muted px-1 rounded">NEXT_PUBLIC_API_URL</code> is set.
+              <code className="rounded bg-muted px-1">NEXT_PUBLIC_API_URL</code> is set.
             </p>
           </CardContent>
         </Card>
@@ -144,9 +136,11 @@ export default function OverviewPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Overview</h1>
+        <p className="text-sm text-muted-foreground">
+          Security-aware LLM observability at a glance
+        </p>
         {anomalies.length > 0 && (
           <Badge variant="destructive" className="animate-pulse gap-1 px-3 py-1 text-sm">
             <AlertTriangle className="h-4 w-4" />
@@ -155,7 +149,6 @@ export default function OverviewPage() {
         )}
       </div>
 
-      {/* Stat cards */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <StatCard
           title="Global Transactions"
@@ -203,32 +196,72 @@ export default function OverviewPage() {
         />
       </div>
 
-      {/* Charts */}
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Trace Activity</CardTitle>
+            <CardTitle>Trace Activity</CardTitle>
           </CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={activityData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" className="stroke-muted" />
-                <XAxis dataKey="hour" className="text-xs" />
-                <YAxis className="text-xs" />
-                <Tooltip />
-                <Bar dataKey="traces" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
-              </BarChart>
+            <ResponsiveContainer width="100%" height={280}>
+              <AreaChart
+                data={activityData}
+                margin={{ top: 10, right: 0, left: -20, bottom: 0 }}
+              >
+                <defs>
+                  <linearGradient id="colorTraces" x1="0" y1="0" x2="0" y2="1">
+                    <stop
+                      offset="5%"
+                      stopColor="hsl(var(--primary))"
+                      stopOpacity={0.35}
+                    />
+                    <stop
+                      offset="95%"
+                      stopColor="hsl(var(--primary))"
+                      stopOpacity={0}
+                    />
+                  </linearGradient>
+                </defs>
+                <XAxis
+                  dataKey="hour"
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }}
+                  dy={10}
+                />
+                <YAxis
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }}
+                  dx={-10}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: "hsl(var(--card))",
+                    borderColor: "hsl(var(--border))",
+                    borderRadius: "12px",
+                  }}
+                  itemStyle={{ color: "hsl(var(--foreground))" }}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="traces"
+                  stroke="hsl(var(--primary))"
+                  strokeWidth={3}
+                  fillOpacity={1}
+                  fill="url(#colorTraces)"
+                />
+              </AreaChart>
             </ResponsiveContainer>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Security Severity Breakdown</CardTitle>
+            <CardTitle>Security Severity Breakdown</CardTitle>
           </CardHeader>
           <CardContent>
             {severityData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={260}>
+              <ResponsiveContainer width="100%" height={280}>
                 <PieChart>
                   <Pie
                     data={severityData}
@@ -242,15 +275,24 @@ export default function OverviewPage() {
                     {severityData.map((entry, i) => (
                       <Cell
                         key={entry.name}
-                        fill={SEVERITY_COLORS[entry.name] ?? PIE_COLORS[i % PIE_COLORS.length]}
+                        fill={
+                          SEVERITY_COLORS[entry.name] ??
+                          PIE_COLORS[i % PIE_COLORS.length]
+                        }
                       />
                     ))}
                   </Pie>
-                  <Tooltip />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: "hsl(var(--card))",
+                      borderColor: "hsl(var(--border))",
+                      borderRadius: "12px",
+                    }}
+                  />
                 </PieChart>
               </ResponsiveContainer>
             ) : (
-              <div className="flex h-[260px] items-center justify-center text-sm text-muted-foreground">
+              <div className="flex h-[280px] items-center justify-center text-sm text-muted-foreground">
                 No security findings detected
               </div>
             )}
@@ -258,10 +300,9 @@ export default function OverviewPage() {
         </Card>
       </div>
 
-      {/* Recent findings */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Recent Security Findings</CardTitle>
+          <CardTitle>Recent Security Findings</CardTitle>
         </CardHeader>
         <CardContent>
           {findings?.data && findings.data.length > 0 ? (
@@ -269,7 +310,7 @@ export default function OverviewPage() {
               {findings.data.slice(0, 5).map((span) => (
                 <div
                   key={span.span_id}
-                  className="flex items-center justify-between rounded-md border p-3"
+                  className="flex items-center justify-between rounded-2xl border border-white/5 bg-background/40 p-4"
                 >
                   <div className="space-y-1">
                     <p className="text-sm font-medium">{span.model_name}</p>

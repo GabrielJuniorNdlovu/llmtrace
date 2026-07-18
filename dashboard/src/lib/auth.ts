@@ -33,8 +33,60 @@ export function sessionCookieName(host: string | null | undefined): string {
   return `${SESSION_COOKIE_BASE}__${safeHost}`;
 }
 
-/** Session cookie lifetime in seconds (24h). */
+/** Admin-key session cookie lifetime in seconds (24h). */
 export const SESSION_TTL_SECONDS = 24 * 60 * 60;
+
+/** User session cookie lifetime in seconds (7 days — matches proxy sessions). */
+export const USER_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
+
+/** Return true when `token` is a dashboard user session (`llmts_…`). */
+export function isUserSessionToken(token: string): boolean {
+  return token.startsWith("llmts_");
+}
+
+interface CookieSetter {
+  cookies: {
+    set: (options: {
+      name: string;
+      value: string;
+      httpOnly?: boolean;
+      secure?: boolean;
+      sameSite?: "strict" | "lax" | "none";
+      path?: string;
+      maxAge?: number;
+    }) => unknown;
+  };
+}
+
+/**
+ * Shared helper to attach the session cookie to a NextResponse.
+ */
+export function attachSessionCookie(
+  res: CookieSetter,
+  host: string | null,
+  token: string,
+  secure: boolean,
+  maxAge: number = USER_SESSION_TTL_SECONDS,
+): void {
+  res.cookies.set({
+    name: sessionCookieName(host),
+    value: token,
+    httpOnly: true,
+    secure,
+    sameSite: "strict",
+    path: "/",
+    maxAge,
+  });
+}
+
+/** Return true when the request is served over HTTPS (incl. via proxy). */
+export function requestIsSecure(req: {
+  nextUrl: { protocol: string };
+  headers: { get: (name: string) => string | null };
+}): boolean {
+  if (req.nextUrl.protocol === "https:") return true;
+  return req.headers.get("x-forwarded-proto") === "https";
+}
 
 const DEFAULT_ADMIN_USERNAME = "admin";
 

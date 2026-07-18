@@ -47,15 +47,15 @@ function ReportViewer({ report }: { report: ComplianceReport }) {
           <Activity className="h-4 w-4" /> Activity Summary
         </h4>
         <div className="grid gap-2">
-          <div className="flex justify-between items-center rounded-lg border bg-background px-4 py-3 shadow-sm">
+          <div className="flex justify-between items-center rounded-2xl border border-white/5 bg-card/50 px-4 py-3">
             <span className="text-sm font-medium">Total Traces Processed</span>
             <Badge variant="secondary" className="font-mono text-base">{d.total_traces_processed ?? 0}</Badge>
           </div>
-          <div className="flex justify-between items-center rounded-lg border bg-background px-4 py-3 shadow-sm">
+          <div className="flex justify-between items-center rounded-2xl border border-white/5 bg-card/50 px-4 py-3">
             <span className="text-sm font-medium">Audit Trail Events</span>
             <Badge variant="secondary" className="font-mono text-base">{d.total_audit_events ?? 0}</Badge>
           </div>
-          <div className="flex justify-between items-center rounded-lg border bg-background px-4 py-3 shadow-sm">
+          <div className="flex justify-between items-center rounded-2xl border border-white/5 bg-card/50 px-4 py-3">
             <span className="text-sm font-medium">Access Management Actions</span>
             <Badge variant="secondary" className="font-mono text-base">{d.access_control_events ?? 0}</Badge>
           </div>
@@ -66,13 +66,13 @@ function ReportViewer({ report }: { report: ComplianceReport }) {
           <ShieldCheck className="h-4 w-4" /> Security Posture
         </h4>
         <div className="grid gap-2">
-          <div className="flex justify-between items-center rounded-lg border bg-background px-4 py-3 shadow-sm">
+          <div className="flex justify-between items-center rounded-2xl border border-white/5 bg-card/50 px-4 py-3">
             <span className="text-sm font-medium">Total Security Findings</span>
             <Badge variant={d.total_security_findings > 0 ? "destructive" : "secondary"} className="font-mono text-base">
               {d.total_security_findings ?? 0}
             </Badge>
           </div>
-          <div className="rounded-lg border bg-background p-4 shadow-sm space-y-3">
+          <div className="rounded-2xl border border-white/5 bg-card/50 p-4 space-y-3">
             <span className="text-xs font-bold uppercase text-muted-foreground">Findings by Severity</span>
             <div className="grid grid-cols-2 gap-2">
               {Object.entries(d.findings_by_severity || { Critical: 0, High: 0, Medium: 0, Low: 0 }).map(([sev, count]: [string, any]) => (
@@ -95,11 +95,11 @@ function ReportViewer({ report }: { report: ComplianceReport }) {
           <Globe className="h-4 w-4" /> Data Processing
         </h4>
         <div className="grid gap-2">
-          <div className="flex justify-between items-center rounded-lg border bg-background px-4 py-3 shadow-sm">
+          <div className="flex justify-between items-center rounded-2xl border border-white/5 bg-card/50 px-4 py-3">
             <span className="text-sm font-medium">Processing Activities</span>
             <Badge variant="secondary" className="font-mono text-base">{d.total_processing_activities ?? 0}</Badge>
           </div>
-          <div className="flex justify-between items-center rounded-lg border bg-background px-4 py-3 shadow-sm">
+          <div className="flex justify-between items-center rounded-2xl border border-white/5 bg-card/50 px-4 py-3">
             <span className="text-sm font-medium">PII Related Findings</span>
             <Badge variant={d.pii_findings > 0 ? "destructive" : "secondary"} className="font-mono text-base">
               {d.pii_findings ?? 0}
@@ -112,11 +112,11 @@ function ReportViewer({ report }: { report: ComplianceReport }) {
           <Lock className="h-4 w-4" /> Governance & Lifecycle
         </h4>
         <div className="grid gap-2">
-          <div className="flex justify-between items-center rounded-lg border bg-background px-4 py-3 shadow-sm">
+          <div className="flex justify-between items-center rounded-2xl border border-white/5 bg-card/50 px-4 py-3">
             <span className="text-sm font-medium">Data Lifecycle Events</span>
             <Badge variant="secondary" className="font-mono text-base">{d.data_lifecycle_events ?? 0}</Badge>
           </div>
-          <div className="flex justify-between items-center rounded-lg border bg-background px-4 py-3 shadow-sm">
+          <div className="flex justify-between items-center rounded-2xl border border-white/5 bg-card/50 px-4 py-3">
             <span className="text-sm font-medium">Unique Tenants Processed</span>
             <Badge variant="secondary" className="font-mono text-base">{d.tenants_processed ?? 0}</Badge>
           </div>
@@ -132,11 +132,11 @@ function ReportViewer({ report }: { report: ComplianceReport }) {
           <Activity className="h-4 w-4" /> Access Audits
         </h4>
         <div className="grid gap-2">
-          <div className="flex justify-between items-center rounded-lg border bg-background px-4 py-3 shadow-sm">
+          <div className="flex justify-between items-center rounded-2xl border border-white/5 bg-card/50 px-4 py-3">
             <span className="text-sm font-medium">Total Access Events</span>
             <Badge variant="secondary" className="font-mono text-base">{d.total_access_events ?? 0}</Badge>
           </div>
-          <div className="flex justify-between items-center rounded-lg border bg-background px-4 py-3 shadow-sm">
+          <div className="flex justify-between items-center rounded-2xl border border-white/5 bg-card/50 px-4 py-3">
             <span className="text-sm font-medium">Unauthorized Access Findings</span>
             <Badge variant={d.unauthorized_access_findings > 0 ? "destructive" : "secondary"} className="font-mono text-base">
               {d.unauthorized_access_findings ?? 0}
@@ -149,13 +149,13 @@ function ReportViewer({ report }: { report: ComplianceReport }) {
           <Lock className="h-4 w-4" /> Security Management
         </h4>
         <div className="grid gap-2">
-          <div className="flex justify-between items-center rounded-lg border bg-background px-4 py-3 shadow-sm">
+          <div className="flex justify-between items-center rounded-2xl border border-white/5 bg-card/50 px-4 py-3">
             <span className="text-sm font-medium">Failed Access Attempts</span>
             <Badge variant={d.failed_access_attempts > 0 ? "destructive" : "secondary"} className="font-mono text-base">
               {d.failed_access_attempts ?? 0}
             </Badge>
           </div>
-          <div className="flex justify-between items-center rounded-lg border bg-background px-4 py-3 shadow-sm">
+          <div className="flex justify-between items-center rounded-2xl border border-white/5 bg-card/50 px-4 py-3">
             <span className="text-sm font-medium">Policy/Access Changes</span>
             <Badge variant="secondary" className="font-mono text-base">{d.access_control_changes ?? 0}</Badge>
           </div>
@@ -166,7 +166,7 @@ function ReportViewer({ report }: { report: ComplianceReport }) {
 
   return (
     <div className="print:p-0">
-      <Card className="border-success/40 bg-success/5 shadow-md print:border-none print:bg-white print:text-black print:shadow-none">
+      <Card className="border-success/40 bg-success/5 print:border-none print:bg-white print:text-black print:shadow-none">
         <CardHeader className="flex flex-row items-center justify-between pb-4 border-b">
           <div className="space-y-1">
             <CardTitle className="flex items-center gap-2 text-2xl">
@@ -209,7 +209,7 @@ function ReportViewer({ report }: { report: ComplianceReport }) {
               {(type === "hipaa") && renderHipaa(data)}
               
               {!(["soc2", "gdpr", "hipaa"].includes(type)) && (
-                <div className="p-8 text-center text-muted-foreground italic border rounded-lg bg-background/50">
+                <div className="p-8 text-center text-muted-foreground italic rounded-2xl border border-white/5 bg-card/50">
                   Select a report type to view summary visualization.
                 </div>
               )}
@@ -316,7 +316,7 @@ export default function CompliancePage() {
       header: "Report Type",
       accessor: (r: ComplianceReport) => (
         <div className="flex items-center gap-2">
-          <div className="p-1.5 rounded-md bg-primary/10 text-primary">
+          <div className="p-1.5 rounded-xl bg-primary/10 text-primary">
             <FileCheck className="h-4 w-4" />
           </div>
           <span className="font-bold uppercase text-xs tracking-tight">{r.report_type}</span>
@@ -374,10 +374,9 @@ export default function CompliancePage() {
   return (
     <div className="space-y-8 max-w-6xl mx-auto pb-12 print:m-0 print:p-0">
       <div className="flex items-center justify-between print:hidden">
-        <div className="space-y-1">
-          <h1 className="text-4xl font-extrabold tracking-tight">Compliance</h1>
-          <p className="text-muted-foreground">Generate and manage regulatory audit reports for your LLM interactions.</p>
-        </div>
+        <p className="text-sm text-muted-foreground">
+          Generate and manage regulatory audit reports for your LLM interactions.
+        </p>
         <div className="flex gap-3">
           <Button variant="outline" onClick={loadReports} className="shadow-sm">
             <RefreshCw className="mr-2 h-4 w-4" /> Refresh
@@ -395,7 +394,7 @@ export default function CompliancePage() {
       {selectedReport && (
         <div className="space-y-4 animate-in fade-in slide-in-from-top-4 duration-300">
           <div className="flex items-center justify-between print:hidden">
-            <h2 data-testid="active-report-viewer" className="text-xl font-bold flex items-center gap-2">
+            <h2 data-testid="active-report-viewer" className="text-2xl font-semibold flex items-center gap-2">
               <div className="w-1.5 h-6 bg-success rounded-full" />
               Active Viewer
             </h2>
@@ -414,7 +413,7 @@ export default function CompliancePage() {
       )}
 
       {showGenerate && (
-        <Card className="border-primary/20 bg-primary/5 shadow-lg animate-in zoom-in-95 duration-200 print:hidden">
+        <Card className="border-primary/20 bg-primary/5 animate-in zoom-in-95 duration-200 print:hidden">
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
               <Plus className="h-5 w-5 text-primary" />
@@ -429,7 +428,7 @@ export default function CompliancePage() {
                 name="report_type"
                 value={reportType}
                 onChange={(e) => setReportType(e.target.value as ReportType)}
-                className="w-56 h-10 rounded-md border border-input bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary shadow-sm"
+                className="w-56 h-10 rounded-xl border border-white/5 bg-card/50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
               >
                 <option value="soc2">SOC2 Audit Trail</option>
                 <option value="gdpr">GDPR Data Processing</option>
@@ -442,7 +441,7 @@ export default function CompliancePage() {
                 type="date" 
                 value={periodStart}
                 onChange={(e) => setPeriodStart(e.target.value)}
-                className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary shadow-sm"
+                className="h-10 rounded-xl border border-white/5 bg-card/50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
               />
             </div>
             <div className="space-y-2">
@@ -451,7 +450,7 @@ export default function CompliancePage() {
                 type="date" 
                 value={periodEnd}
                 onChange={(e) => setPeriodEnd(e.target.value)}
-                className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary shadow-sm"
+                className="h-10 rounded-xl border border-white/5 bg-card/50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
               />
             </div>
             <Button
@@ -466,7 +465,7 @@ export default function CompliancePage() {
         </Card>
       )}
 
-      <Card className="shadow-sm print:hidden">
+      <Card className="print:hidden">
         <CardHeader className="pb-2">
           <CardTitle className="text-lg">Audit History</CardTitle>
           <CardDescription>All generated compliance records for the current tenant.</CardDescription>

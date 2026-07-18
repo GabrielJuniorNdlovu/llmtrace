@@ -66,7 +66,7 @@ function renderConfigValue(value: unknown, depth = 0) {
         {value.map((item, index) => (
           <div
             key={`${depth}-${index}`}
-            className="rounded-md border bg-background/50 p-2"
+            className="rounded-2xl border border-white/5 bg-card/50 p-2"
           >
             {renderConfigValue(item, depth + 1)}
           </div>
@@ -86,7 +86,7 @@ function renderConfigValue(value: unknown, depth = 0) {
         {entries.map(([key, nested]) => (
           <div
             key={`${depth}-${key}`}
-            className="grid gap-2 rounded-md border bg-background/50 p-3 md:grid-cols-[240px_1fr]"
+            className="grid gap-2 rounded-2xl border border-white/5 bg-card/50 p-3 md:grid-cols-[240px_1fr]"
           >
             <div className="text-sm font-medium">{humanizeKey(key)}</div>
             <div className="text-sm">{renderConfigValue(nested, depth + 1)}</div>
@@ -266,7 +266,9 @@ export default function SettingsClient({ proxyUrl }: SettingsClientProps) {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-3xl font-bold">Settings</h1>
+      <p className="text-sm text-muted-foreground">
+        URLs, connectivity, and runtime configuration for the LLMTrace proxy
+      </p>
 
       {/* API Connection */}
       <Card>
@@ -317,7 +319,7 @@ export default function SettingsClient({ proxyUrl }: SettingsClientProps) {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="rounded-md border">
+          <div className="overflow-hidden rounded-2xl border border-white/5 bg-card/50">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b bg-muted/50">
@@ -361,7 +363,7 @@ export default function SettingsClient({ proxyUrl }: SettingsClientProps) {
             <RefreshCw className={`mr-2 h-4 w-4 ${configLoading ? "animate-spin" : ""}`} />
             Refresh Config
           </Button>
-          <div className="rounded-md border bg-muted/20 p-3">
+          <div className="rounded-2xl border border-white/5 bg-card/50 p-3">
             {liveConfig ? (
               <div className="max-h-[520px] overflow-auto pr-1">
                 {renderConfigValue(liveConfig)}

@@ -342,39 +342,58 @@ impl ClickHouseTraceRepository {
 
     /// Build a dynamic WHERE clause from [`TraceQuery`] filters for the spans table.
     ///
-    /// Returns the SQL fragment starting with `tenant_id = ...` (no leading `WHERE`).
-    fn build_span_filter(query: &TraceQuery) -> String {
-        let mut conditions = vec![format!("tenant_id = {}", fmt_uuid(&query.tenant_id.0))];
+    /// Every column reference is prefixed with `prefix` (e.g. `"s."` when the
+    /// spans table is aliased in a join, or `""` for a plain query). When
+    /// `include_tenant` is false the `tenant_id` predicate is omitted
+    /// (admin cross-tenant scope); every other filter still applies. Returns
+    /// `1 = 1` when no conditions apply so the fragment is always a valid
+    /// WHERE body.
+    fn build_span_filter_with(query: &TraceQuery, prefix: &str, include_tenant: bool) -> String {
+        let mut conditions = Vec::new();
 
+        if include_tenant {
+            conditions.push(format!(
+                "{prefix}tenant_id = {}",
+                fmt_uuid(&query.tenant_id.0)
+            ));
+        }
         if let Some(ref trace_id) = query.trace_id {
-            conditions.push(format!("trace_id = {}", fmt_uuid(trace_id)));
+            conditions.push(format!("{prefix}trace_id = {}", fmt_uuid(trace_id)));
         }
         if let Some(ref start) = query.start_time {
-            conditions.push(format!("start_time >= {}", fmt_datetime(start)));
+            conditions.push(format!("{prefix}start_time >= {}", fmt_datetime(start)));
         }
         if let Some(ref end) = query.end_time {
-            conditions.push(format!("start_time <= {}", fmt_datetime(end)));
+            conditions.push(format!("{prefix}start_time <= {}", fmt_datetime(end)));
         }
         if let Some(ref provider) = query.provider {
             conditions.push(format!(
-                "provider = {}",
+                "{prefix}provider = {}",
                 fmt_string(&serialize_provider(provider))
             ));
         }
         if let Some(ref model) = query.model_name {
-            conditions.push(format!("model_name = {}", fmt_string(model)));
+            conditions.push(format!("{prefix}model_name = {}", fmt_string(model)));
         }
         if let Some(ref op) = query.operation_name {
-            conditions.push(format!("operation_name = {}", fmt_string(op)));
+            conditions.push(format!("{prefix}operation_name = {}", fmt_string(op)));
         }
         if let Some(min) = query.min_security_score {
-            conditions.push(format!("security_score >= {min}"));
+            conditions.push(format!("{prefix}security_score >= {min}"));
         }
         if let Some(max) = query.max_security_score {
-            conditions.push(format!("security_score <= {max}"));
+            conditions.push(format!("{prefix}security_score <= {max}"));
         }
 
+        if conditions.is_empty() {
+            return "1 = 1".to_string();
+        }
         conditions.join(" AND ")
+    }
+
+    /// Build a WHERE clause for the spans table scoped to the query's tenant.
+    fn build_span_filter(query: &TraceQuery) -> String {
+        Self::build_span_filter_with(query, "", true)
     }
 
     /// Build the ORDER BY / LIMIT / OFFSET suffix for a query.
@@ -387,6 +406,103 @@ impl ClickHouseTraceRepository {
             sql.push_str(&format!(" OFFSET {offset}"));
         }
         sql
+    }
+
+    /// Shared implementation for tenant-scoped and cross-tenant trace queries.
+    ///
+    /// When `include_tenant` is false the tenant predicate is omitted from
+    /// every statement (admin `scope=all` reads); all other filters apply.
+    async fn query_traces_impl(
+        &self,
+        query: &TraceQuery,
+        include_tenant: bool,
+    ) -> Result<Vec<TraceEvent>> {
+        // Find matching trace IDs via the spans table.
+        let filter = Self::build_span_filter_with(query, "s.", include_tenant);
+        let pagination = Self::build_pagination(query, "t.created_at");
+
+        let trace_id_sql = format!(
+            "SELECT DISTINCT s.trace_id \
+             FROM spans s \
+             JOIN traces t ON s.trace_id = t.trace_id AND s.tenant_id = t.tenant_id \
+             WHERE {filter}{pagination}"
+        );
+
+        #[derive(clickhouse::Row, Deserialize)]
+        struct TraceIdRow {
+            #[serde(with = "clickhouse::serde::uuid")]
+            trace_id: Uuid,
+        }
+
+        let trace_ids: Vec<TraceIdRow> = self
+            .client
+            .query(&trace_id_sql)
+            .fetch_all()
+            .await
+            .map_err(|e| LLMTraceError::Storage(format!("Failed to query trace IDs: {e}")))?;
+
+        if trace_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let id_list: String = trace_ids
+            .iter()
+            .map(|r| fmt_uuid(&r.trace_id))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let tenant_predicate = if include_tenant {
+            format!("tenant_id = {} AND ", fmt_uuid(&query.tenant_id.0))
+        } else {
+            String::new()
+        };
+
+        // Load trace metadata.
+        let meta_sql = format!(
+            "SELECT ?fields FROM traces \
+             WHERE {tenant_predicate}trace_id IN ({id_list}) \
+             ORDER BY created_at DESC"
+        );
+        let meta_rows: Vec<TraceRow> = self
+            .client
+            .query(&meta_sql)
+            .fetch_all()
+            .await
+            .map_err(|e| LLMTraceError::Storage(format!("Failed to load trace metadata: {e}")))?;
+
+        // Load all spans belonging to those traces.
+        let span_sql = format!(
+            "SELECT ?fields FROM spans \
+             WHERE {tenant_predicate}trace_id IN ({id_list}) \
+             ORDER BY start_time ASC"
+        );
+        let span_rows: Vec<SpanRow> = self
+            .client
+            .query(&span_sql)
+            .fetch_all()
+            .await
+            .map_err(|e| LLMTraceError::Storage(format!("Failed to load spans: {e}")))?;
+
+        // Group spans by trace_id.
+        let mut grouped: HashMap<Uuid, Vec<TraceSpan>> = HashMap::new();
+        for row in span_rows {
+            let tid = row.trace_id;
+            let span = row_to_span(row)?;
+            grouped.entry(tid).or_default().push(span);
+        }
+
+        // Assemble results.
+        let mut results = Vec::with_capacity(meta_rows.len());
+        for meta in meta_rows {
+            results.push(TraceEvent {
+                trace_id: meta.trace_id,
+                tenant_id: TenantId(meta.tenant_id),
+                spans: grouped.remove(&meta.trace_id).unwrap_or_default(),
+                created_at: meta.created_at,
+            });
+        }
+
+        Ok(results)
     }
 }
 
@@ -478,59 +594,31 @@ impl TraceRepository for ClickHouseTraceRepository {
     }
 
     async fn query_traces(&self, query: &TraceQuery) -> Result<Vec<TraceEvent>> {
-        // Find matching trace IDs via the spans table.
-        let filter = Self::build_span_filter(query);
-        let pagination = Self::build_pagination(query, "t.created_at");
+        self.query_traces_impl(query, true).await
+    }
 
-        let trace_id_sql = format!(
-            "SELECT DISTINCT s.trace_id \
-             FROM spans s \
-             JOIN traces t ON s.trace_id = t.trace_id AND s.tenant_id = t.tenant_id \
-             WHERE s.{filter}{pagination}"
-        );
+    async fn query_traces_all_tenants(&self, query: &TraceQuery) -> Result<Vec<TraceEvent>> {
+        self.query_traces_impl(query, false).await
+    }
 
-        #[derive(clickhouse::Row, Deserialize)]
-        struct TraceIdRow {
-            #[serde(with = "clickhouse::serde::uuid")]
-            trace_id: Uuid,
-        }
+    async fn get_trace_any_tenant(&self, trace_id: Uuid) -> Result<Option<TraceEvent>> {
+        let trid = fmt_uuid(&trace_id);
 
-        let trace_ids: Vec<TraceIdRow> = self
-            .client
-            .query(&trace_id_sql)
-            .fetch_all()
-            .await
-            .map_err(|e| LLMTraceError::Storage(format!("Failed to query trace IDs: {e}")))?;
-
-        if trace_ids.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let id_list: String = trace_ids
-            .iter()
-            .map(|r| fmt_uuid(&r.trace_id))
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        let tenant_filter = fmt_uuid(&query.tenant_id.0);
-
-        // Load trace metadata.
-        let meta_sql = format!(
-            "SELECT ?fields FROM traces \
-             WHERE tenant_id = {tenant_filter} AND trace_id IN ({id_list}) \
-             ORDER BY created_at DESC"
-        );
-        let meta_rows: Vec<TraceRow> = self
+        let meta_sql = format!("SELECT ?fields FROM traces WHERE trace_id = {trid} LIMIT 1");
+        let meta: Option<TraceRow> = self
             .client
             .query(&meta_sql)
-            .fetch_all()
+            .fetch_optional()
             .await
-            .map_err(|e| LLMTraceError::Storage(format!("Failed to load trace metadata: {e}")))?;
+            .map_err(|e| LLMTraceError::Storage(format!("Failed to get trace: {e}")))?;
 
-        // Load all spans belonging to those traces.
+        let Some(meta) = meta else {
+            return Ok(None);
+        };
+
         let span_sql = format!(
             "SELECT ?fields FROM spans \
-             WHERE tenant_id = {tenant_filter} AND trace_id IN ({id_list}) \
+             WHERE trace_id = {trid} \
              ORDER BY start_time ASC"
         );
         let span_rows: Vec<SpanRow> = self
@@ -538,28 +626,19 @@ impl TraceRepository for ClickHouseTraceRepository {
             .query(&span_sql)
             .fetch_all()
             .await
-            .map_err(|e| LLMTraceError::Storage(format!("Failed to load spans: {e}")))?;
+            .map_err(|e| LLMTraceError::Storage(format!("Failed to load trace spans: {e}")))?;
 
-        // Group spans by trace_id.
-        let mut grouped: HashMap<Uuid, Vec<TraceSpan>> = HashMap::new();
-        for row in span_rows {
-            let tid = row.trace_id;
-            let span = row_to_span(row)?;
-            grouped.entry(tid).or_default().push(span);
-        }
+        let spans: Vec<TraceSpan> = span_rows
+            .into_iter()
+            .map(row_to_span)
+            .collect::<Result<_>>()?;
 
-        // Assemble results.
-        let mut results = Vec::with_capacity(meta_rows.len());
-        for meta in meta_rows {
-            results.push(TraceEvent {
-                trace_id: meta.trace_id,
-                tenant_id: TenantId(meta.tenant_id),
-                spans: grouped.remove(&meta.trace_id).unwrap_or_default(),
-                created_at: meta.created_at,
-            });
-        }
-
-        Ok(results)
+        Ok(Some(TraceEvent {
+            trace_id: meta.trace_id,
+            tenant_id: TenantId(meta.tenant_id),
+            spans,
+            created_at: meta.created_at,
+        }))
     }
 
     async fn query_spans(&self, query: &TraceQuery) -> Result<Vec<TraceSpan>> {
@@ -916,6 +995,85 @@ mod tests {
         assert_eq!(retrieved.span_id, span.span_id);
         assert_eq!(retrieved.provider, LLMProvider::Anthropic);
         assert_eq!(retrieved.model_name, "claude-3");
+    }
+
+    #[test]
+    fn test_build_span_filter_with_omits_tenant_for_cross_tenant_scope() {
+        let tenant = TenantId::new();
+        let query = TraceQuery::new(tenant).with_provider(LLMProvider::OpenAI);
+
+        let scoped = ClickHouseTraceRepository::build_span_filter_with(&query, "", true);
+        assert!(scoped.contains("tenant_id ="));
+
+        let all = ClickHouseTraceRepository::build_span_filter_with(&query, "", false);
+        assert!(!all.contains("tenant_id"));
+        assert!(all.contains("provider ="));
+    }
+
+    #[test]
+    fn test_build_span_filter_with_no_conditions_yields_valid_where_body() {
+        let tenant = TenantId::new();
+        let query = TraceQuery::new(tenant);
+
+        let all = ClickHouseTraceRepository::build_span_filter_with(&query, "s.", false);
+        assert_eq!(all, "1 = 1");
+    }
+
+    #[test]
+    fn test_build_span_filter_with_prefixes_every_column() {
+        let tenant = TenantId::new();
+        let query = TraceQuery::new(tenant)
+            .with_provider(LLMProvider::OpenAI)
+            .with_security_score_range(10, 90);
+
+        let filter = ClickHouseTraceRepository::build_span_filter_with(&query, "s.", true);
+        assert!(filter.contains("s.tenant_id ="));
+        assert!(filter.contains("s.provider ="));
+        assert!(filter.contains("s.security_score >= 10"));
+        assert!(filter.contains("s.security_score <= 90"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a running ClickHouse instance"]
+    async fn test_query_traces_all_tenants_returns_every_tenants_traces() {
+        let repo = test_repo().await;
+        let tenant_a = TenantId::new();
+        let tenant_b = TenantId::new();
+
+        repo.store_trace(&make_trace(tenant_a)).await.unwrap();
+        repo.store_trace(&make_trace(tenant_b)).await.unwrap();
+
+        // The tenant on the query is ignored for cross-tenant reads.
+        let results = repo
+            .query_traces_all_tenants(&TraceQuery::new(TenantId::new()))
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 2);
+        let tenants: Vec<TenantId> = results.iter().map(|t| t.tenant_id).collect();
+        assert!(tenants.contains(&tenant_a));
+        assert!(tenants.contains(&tenant_b));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a running ClickHouse instance"]
+    async fn test_get_trace_any_tenant_finds_trace_without_tenant_filter() {
+        let repo = test_repo().await;
+        let tenant = TenantId::new();
+        let trace = make_trace(tenant);
+
+        repo.store_trace(&trace).await.unwrap();
+
+        let found = repo
+            .get_trace_any_tenant(trace.trace_id)
+            .await
+            .unwrap()
+            .expect("trace should be found without a tenant filter");
+        assert_eq!(found.trace_id, trace.trace_id);
+        assert_eq!(found.tenant_id, tenant);
+        assert_eq!(found.spans.len(), 1);
+
+        let missing = repo.get_trace_any_tenant(Uuid::new_v4()).await.unwrap();
+        assert!(missing.is_none());
     }
 
     #[tokio::test]

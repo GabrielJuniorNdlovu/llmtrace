@@ -1032,7 +1032,7 @@ export default function PlaygroundClient(): ReactElement {
           )}
           {error && (
             <p
-              className="mt-4 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+              className="mt-4 rounded-2xl border border-destructive/50 bg-destructive/10 px-3 py-2 text-xs text-destructive"
               data-testid="playground-error"
             >
               {error}
@@ -1144,7 +1144,7 @@ function EmptyState(props: { onPick: (chip: ActionChip) => void; disabled: boole
             disabled={props.disabled}
             onClick={() => props.onPick(c)}
             data-testid={`playground-action-${c.id}`}
-            className="rounded-lg border bg-card px-4 py-3 text-left text-xs transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-2xl border border-white/5 bg-card/50 px-4 py-3 text-left text-xs transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
           >
             <div className="font-medium text-foreground">{c.label}</div>
             <div className="mt-1 text-[11px] text-muted-foreground">{c.hint}</div>
@@ -1315,7 +1315,7 @@ function DetailsPanel(props: { msg: ChatMessage }): ReactElement {
   return (
     <div
       data-testid="playground-details"
-      className="w-full rounded-lg border bg-muted/30 px-3 py-2.5 text-[11px]"
+      className="w-full rounded-2xl border border-white/5 bg-card/50 px-3 py-2.5 text-[11px]"
     >
       <div className="space-y-3">
         <LabelingBlock meta={meta} />
@@ -1450,7 +1450,7 @@ function RawBlock(props: {
       </div>
       <pre
         data-testid={props.testId}
-        className="max-h-64 overflow-auto rounded-md border border-border bg-card text-foreground px-2 py-1.5 text-[10px] leading-snug"
+        className="max-h-64 overflow-auto rounded-xl border border-white/5 bg-card/50 text-foreground px-2 py-1.5 text-[10px] leading-snug"
       >
         {prettyJson(props.body)}
       </pre>
@@ -1486,7 +1486,7 @@ function Composer(props: {
           &ldquo;All tenants&rdquo;.
         </p>
       )}
-      <div className="mx-auto flex w-full max-w-3xl items-end gap-2 rounded-2xl border bg-card px-3 py-2 focus-within:ring-2 focus-within:ring-primary/30">
+      <div className="mx-auto flex w-full max-w-3xl items-end gap-2 rounded-2xl border border-white/5 bg-card/50 px-3 py-2 focus-within:ring-2 focus-within:ring-primary/30">
         <textarea
           ref={ref}
           data-testid="playground-input"
@@ -1594,7 +1594,7 @@ function SettingsForm(props: {
           value={s.model}
           onChange={(e) => update({ model: e.target.value })}
           disabled={props.disabled}
-          className="rounded-md border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+          className="rounded-xl border border-white/5 bg-card/50 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
         >
           {DEFAULT_MODELS.map((m) => (
             <option key={m} value={m}>
@@ -1612,7 +1612,7 @@ function SettingsForm(props: {
           onChange={(e) => update({ customModel: e.target.value })}
           disabled={props.disabled}
           placeholder="e.g. my-org/my-model"
-          className="rounded-md border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+          className="rounded-xl border border-white/5 bg-card/50 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
         />
       </label>
       <label className="flex flex-col gap-1.5 text-xs">
@@ -1640,7 +1640,7 @@ function SettingsForm(props: {
           disabled={props.disabled}
           rows={5}
           placeholder="Prepended as a `system` message on every send."
-          className="rounded-md border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+          className="rounded-xl border border-white/5 bg-card/50 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
         />
       </label>
     </div>
