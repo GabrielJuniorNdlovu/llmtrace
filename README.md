@@ -1,357 +1,231 @@
 # LLMTrace
 
-[![CI](https://github.com/epappas/llmtrace/actions/workflows/ci.yml/badge.svg)](https://github.com/epappas/llmtrace/actions/workflows/ci.yml)
-[![Security Audit](https://github.com/epappas/llmtrace/actions/workflows/security.yml/badge.svg)](https://github.com/epappas/llmtrace/actions/workflows/security.yml)
-[![crates.io](https://img.shields.io/crates/v/llmtrace.svg)](https://crates.io/crates/llmtrace)
-[![PyPI](https://img.shields.io/pypi/v/llmtracing.svg)](https://pypi.org/project/llmtracing/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
-[![GitHub Stars](https://img.shields.io/github/stars/epappas/llmtrace)](https://github.com/epappas/llmtrace/stargazers)
 
-**Zero-code LLM observability and security for production.**
+**Security-aware LLM observability for production.**
 
-LLMTrace is a transparent proxy that captures, analyzes, and secures your LLM interactions in real-time. Drop it between your app and any OpenAI-compatible API to get instant visibility into prompt injection attacks, PII leaks, cost overruns, and performance bottlenecks — without changing a single line of code.
+LLMTrace is a transparent proxy that sits between your application and any OpenAI-compatible LLM provider. It captures traces, scans for prompt injection and PII, enforces cost controls, and exposes a dashboard — without requiring you to change application code beyond pointing the client at a different base URL.
 
-## Why LLMTrace?
+This repository is a fork of the original [LLMTrace](https://github.com/epappas/llmtrace) project. See [Credits](#credits) and [Fork Contributions](#fork-contributions).
 
-Production LLM applications face three critical blind spots:
+## What The Project Does
 
-- **Security vulnerabilities** — Prompt injection, data leakage, PII exposure
-- **Cost runaway** — Uncontrolled API spend, inefficient token usage
-- **Performance opacity** — No visibility into latency, failure rates, or user behavior
+Your app talks to LLMTrace instead of the provider. LLMTrace forwards the request upstream, then asynchronously:
 
-LLMTrace solves this by sitting transparently between your application and LLM providers, giving you complete observability and control.
+- Records spans, tokens, latency, and estimated cost
+- Runs security detectors (regex + ML ensemble) for prompt injection and PII
+- Enforces per-tenant rate limits and cost caps
+- Serves a Next.js dashboard for traces, security findings, costs, and tenant management
+
+Email/password signup provisions a dedicated tenant and Operator session. Operators can retrieve or rotate their workspace API token from Settings.
 
 ## Key Features
 
-- **Transparent Proxy** — Drop-in replacement for any OpenAI-compatible API
-- **ML Ensemble Detection** — Multi-detector majority voting (regex, DeBERTa, InjecGuard, PIGuard)
-- **Real-time Security** — Prompt injection detection, PII scanning, data leakage prevention
-- **Performance Monitoring** — Latency, token usage, streaming metrics (TTFT), error tracking
-- **Cost Control** — Per-agent budgets, rate limits, anomaly detection
-- **Multi-tenant Ready** — Isolated per API key or custom tenant headers
-- **High Performance** — Built in Rust, handles streaming responses, circuit breaker protection
-
-## Security Performance
-
-| Metric    | Value |
-|-----------|-------|
-| Accuracy  | 87.6% |
-| Precision | 95.5% |
-| F1 Score  | 86.9% |
-| Recall    | 79.7% |
-
-Tested on a 153-sample adversarial corpus across 12 attack categories including CyberSecEval2, BIPIA, TensorTrust, and InjecAgent. See [benchmarks/](benchmarks/) for methodology and full results.
-
-## Quick Start
-
-### 1. Install
-
-```bash
-curl -sS https://raw.githubusercontent.com/epappas/llmtrace/main/scripts/install.sh | bash
-```
-
-Or use one of the other methods:
-
-```bash
-cargo install llmtrace                # from crates.io
-docker pull ghcr.io/epappas/llmtrace-proxy:latest  # Docker
-```
-
-### 2. Run
-
-```bash
-export OPENAI_API_KEY="sk-..."
-llmtrace-proxy --config config.yaml
-```
-
-### 3. Try it with your existing code
-
-```python
-import openai
-
-# Before: Point to OpenAI directly
-client = openai.OpenAI()
-
-# After: Point to LLMTrace proxy (that's it!)
-client = openai.OpenAI(base_url="http://localhost:8080/v1")
-
-# Your code stays exactly the same
-response = client.chat.completions.create(
-    model="gpt-4",
-    messages=[{"role": "user", "content": "Hello!"}]
-)
-```
-
-### 4. See your traces
-
-```bash
-# View recent activity
-curl http://localhost:8080/api/v1/traces | jq '.[0]'
-
-# Check security findings
-curl http://localhost:8080/api/v1/security/findings | jq
-
-# Monitor costs
-curl http://localhost:8080/api/v1/costs/current | jq
-```
-
-**That's it!** You now have full observability into your LLM interactions.
+- Transparent OpenAI-compatible proxy (`/v1/chat/completions` and related routes)
+- Real-time security scanning (prompt injection, PII)
+- Trace and span storage with filtering and detail views
+- Cost tracking and budget controls
+- Multi-tenant isolation with API keys and dashboard sessions
+- Production storage profile: ClickHouse + PostgreSQL + Redis
+- Lite profile: SQLite for local single-binary use
+- Built-in dashboard (Next.js) with signup/login
 
 ## Architecture
 
 ```mermaid
-graph LR
-    A[Your Application] -->|HTTP| B[LLMTrace Proxy]
-    B -->|HTTP| C[OpenAI/LLM Provider]
-    B -->|Async| D[Security Engine]
-    B -->|Async| E[Storage Engine]
-
-    D --> F[SQLite/PostgreSQL]
-    E --> F
-    D --> G[Real-time Alerts]
-
-    H[Dashboard] -->|REST API| B
-    I[Monitoring] -->|Metrics API| B
-
-    style B fill:#e1f5fe
-    style D fill:#fff3e0
-    style E fill:#f3e5f5
+flowchart LR
+    App[YourApplication] -->|HTTP_OpenAI_SDK| Proxy[LLMTraceProxy]
+    Proxy -->|Forward| Provider[LLMProvider]
+    Proxy -->|Async| Security[SecurityEngine]
+    Proxy -->|Async| Storage[StorageLayer]
+    Security --> Meta[(PostgreSQL)]
+    Storage --> Traces[(ClickHouse)]
+    Storage --> Cache[(Redis)]
+    Dashboard[NextjsDashboard] -->|REST| Proxy
 ```
 
-**How it works:**
-1. **Transparent Proxy** — Your app sends requests to LLMTrace instead of OpenAI
-2. **Pass-through** — LLMTrace forwards requests to the real LLM provider
-3. **Background Analysis** — Security analysis and trace capture happen asynchronously
-4. **Zero Impact** — Your application never waits for analysis, even if something fails
+**Request path**
 
-## Integration Examples
+- Your application sends OpenAI-compatible HTTP to the proxy
+- The proxy authenticates the tenant (API token or session cookie via the dashboard)
+- Traffic is forwarded to the configured upstream provider
+- Security analysis and persistence run asynchronously so the hot path stays fast
 
-### OpenAI Python SDK
+## Stack
+
+| Layer | Technology |
+|-------|------------|
+| Proxy | Rust, Axum |
+| Security | Regex detectors + ML ensemble (optional preload) |
+| Metadata | PostgreSQL (or SQLite in lite mode) |
+| Traces | ClickHouse (or SQLite in lite mode) |
+| Cache | Redis |
+| Dashboard | Next.js 15, TypeScript |
+
+| Crate / package | Purpose |
+|-----------------|---------|
+| `llmtrace-core` | Shared types and traits |
+| `llmtrace` / `llmtrace-proxy` | HTTP proxy binary |
+| `llmtrace-security` | Security analysis engine |
+| `llmtrace-storage` | Storage backends |
+| `dashboard/` | Web UI |
+
+## Quick Start With Docker Compose
+
+This is the path validated for local development on this fork.
+
+### Prerequisites
+
+- Docker Desktop (or Docker Engine + Compose v2)
+- An upstream provider API key (for example `OPENAI_API_KEY`)
+
+### Setup
+
+```bash
+git clone https://github.com/GabrielJuniorNdlovu/llmtrace.git
+cd llmtrace
+cp .env.example .env
+```
+
+Edit `.env`:
+
+- Set `OPENAI_API_KEY` (or point `LLMTRACE_UPSTREAM_URL` at your provider)
+- Change `LLMTRACE_AUTH_ADMIN_KEY` from the placeholder before any shared use
+- Keep `LLMTRACE_AUTH_ENABLED=1` when the dashboard login gate is enabled
+
+### Run
+
+```bash
+docker compose up -d --build
+```
+
+Services:
+
+| Service | URL |
+|---------|-----|
+| Dashboard | http://localhost:3000 |
+| Proxy | http://localhost:8080 |
+| Health | http://localhost:8080/health |
+| PostgreSQL | localhost:5432 |
+| ClickHouse | localhost:8123 |
+| Redis | localhost:6379 |
+
+First build of the Rust proxy image can take 20–30 minutes. Subsequent rebuilds use cache.
+
+### Sign in
+
+- Open http://localhost:3000/login
+- Create an account with email and password, or use operator admin-key sign-in
+- After signup, Settings shows your one-time workspace API token (also retrievable later)
+
+### Send traffic through the proxy
+
 ```python
 import openai
 
-# Just change the base_url
 client = openai.OpenAI(
     base_url="http://localhost:8080/v1",
-    api_key="your-openai-key"
+    api_key="YOUR_WORKSPACE_API_TOKEN",
+)
+
+response = client.chat.completions.create(
+    model="gpt-4",
+    messages=[{"role": "user", "content": "Hello!"}],
 )
 ```
 
-### OpenAI Node.js SDK
-```javascript
-import OpenAI from 'openai';
-
-const openai = new OpenAI({
-  baseURL: 'http://localhost:8080/v1',
-  apiKey: 'your-openai-key'
-});
-```
-
-### LangChain
-```python
-from langchain_openai import ChatOpenAI
-
-llm = ChatOpenAI(
-    base_url="http://localhost:8080/v1",
-    api_key="your-openai-key"
-)
-```
-
-### curl
 ```bash
 curl http://localhost:8080/v1/chat/completions \
-  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -H "Authorization: Bearer YOUR_WORKSPACE_API_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"model": "gpt-4", "messages": [{"role": "user", "content": "Hello!"}]}'
+  -d '{"model":"gpt-4","messages":[{"role":"user","content":"Hello!"}]}'
 ```
 
-**[View all integration guides ->](docs/README.md#guides)**
-
-## Dashboard & Monitoring
-
-LLMTrace includes a built-in dashboard for visualizing traces, security findings, and costs:
+### Useful commands
 
 ```bash
-# Access the dashboard
-open http://localhost:3000
-
-# Or use the REST API
-curl http://localhost:8080/api/v1/traces
-curl http://localhost:8080/api/v1/security/findings
-curl http://localhost:8080/api/v1/costs/current
+docker compose ps
+docker compose logs -f llmtrace-proxy
+docker compose logs -f dashboard
+curl http://localhost:8080/health
+docker compose down
 ```
-
-**Dashboard features:**
-- Real-time trace visualization
-- Security incident timeline
-- Cost breakdown by model/agent
-- Performance metrics and alerts
 
 ## Configuration
 
-### Minimal Configuration
-```yaml
-# config.yaml
-upstream_url: "https://api.openai.com"
-listen_addr: "0.0.0.0:8080"
+Copy [`.env.example`](.env.example) to `.env`. Important variables:
 
-storage:
-  profile: "lite"  # SQLite for simple deployments
+| Variable | Purpose |
+|----------|---------|
+| `LLMTRACE_STORAGE_PROFILE` | `production`, `lite`, or `memory` |
+| `LLMTRACE_UPSTREAM_URL` | Provider base URL (for example `https://api.openai.com`) |
+| `OPENAI_API_KEY` | Upstream credential (or your provider equivalent) |
+| `LLMTRACE_AUTH_ENABLED` | Require API-key / session auth on the proxy |
+| `LLMTRACE_AUTH_ADMIN_KEY` | Bootstrap operator key for dashboard admin login |
+| `LLMTRACE_DASHBOARD_AUTH_DISABLED` | `0` = login required, `1` = local demo bypass |
 
-security:
-  enable_prompt_injection_detection: true
-  enable_pii_detection: true
-```
+Proxy YAML configuration is documented under [`docs/getting-started/configuration.md`](docs/getting-started/configuration.md). Compose mounts `config.yaml` into the proxy container.
 
-### Production Configuration
-```yaml
-# config.yaml
-upstream_url: "https://api.openai.com"
-listen_addr: "0.0.0.0:8080"
-
-storage:
-  profile: "production"
-  postgres_url: "postgresql://user:pass@localhost/llmtrace"
-  clickhouse_url: "http://localhost:8123"
-  redis_url: "redis://localhost:6379"
-
-security:
-  enable_prompt_injection_detection: true
-  enable_pii_detection: true
-  enable_streaming_analysis: true
-
-cost_control:
-  daily_budget_usd: 1000
-  per_agent_daily_budget_usd: 100
-
-alerts:
-  slack:
-    webhook_url: "https://hooks.slack.com/..."
-
-rate_limiting:
-  requests_per_minute: 1000
-  burst_capacity: 2000
-```
-
-**[Full configuration guide ->](docs/getting-started/configuration.md)**
-
-## API Reference
+## API Surface (Selected)
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /api/v1/traces` | List recent traces |
-| `GET /api/v1/traces/{id}` | Get specific trace details |
-| `GET /api/v1/security/findings` | List security incidents |
-| `GET /api/v1/costs/current` | Cost breakdown and usage |
-| `GET /health` | Health check and circuit breaker status |
-| `POST /policies/validate` | Validate custom security policies |
+| `POST /v1/chat/completions` | OpenAI-compatible chat |
+| `GET /api/v1/traces` | List traces |
+| `GET /api/v1/security/findings` | Security findings |
+| `GET /api/v1/tenants/:id/token` | Tenant API token (admin or own operator) |
+| `POST /api/v1/auth/signup` | Email/password signup |
+| `POST /api/v1/auth/login` | Email/password login |
+| `GET /health` | Health and subsystem status |
 
-**[Full API documentation ->](docs/guides/API.md)**
+## Development From Source
 
-## Installation
-
-### Cargo (Rust Proxy)
 ```bash
-cargo install llmtrace
-llmtrace-proxy --config config.yaml
-```
-
-### Pip (Python SDK)
-```bash
-pip install llmtracing
-```
-
-```python
-import llmtrace
-
-tracer = llmtrace.configure({"enable_security": True})
-span = tracer.start_span("chat_completion", "openai", "gpt-4")
-span.set_prompt("Hello!")
-span.set_response("Hi there!")
-print(span.to_dict())
-```
-
-### Docker
-```bash
-docker pull ghcr.io/epappas/llmtrace-proxy:latest
-docker run -p 8080:8080 ghcr.io/epappas/llmtrace-proxy:latest
-```
-
-### Docker Compose with Dependencies
-```bash
-curl -o compose.yaml https://raw.githubusercontent.com/epappas/llmtrace/main/compose.yaml
-docker compose up -d
-```
-
-### From Source
-```bash
-git clone https://github.com/epappas/llmtrace
-cd llmtrace
-cargo build --release --features ml
-./target/release/llmtrace-proxy --config config.yaml
-```
-
-### Kubernetes
-```bash
-helm install llmtrace ./deployments/helm/llmtrace
-```
-
-**[Installation guide with all methods ->](docs/getting-started/installation.md)**
-
-## Production Deployment
-
-### High-Availability Setup
-- **Load Balancer** -> Multiple LLMTrace instances
-- **PostgreSQL** for persistent trace storage
-- **ClickHouse** for high-volume analytics
-- **Redis** for caching and rate limiting
-
-### Security Best Practices
-- API key validation and tenant isolation
-- TLS termination at load balancer
-- Network segmentation between components
-- Regular security policy updates
-
-### Monitoring & Alerting
-- Prometheus metrics export
-- Grafana dashboards
-- PagerDuty/Slack integration
-- OWASP LLM Top 10 compliance reporting
-
-**[Production deployment guide ->](docs/deployment/kubernetes.md)**
-
-## Contributing
-
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
-
-### Development Setup
-```bash
-git clone https://github.com/epappas/llmtrace
-cd llmtrace
+# Rust toolchain (1.75+)
 cargo build --workspace
 cargo test --workspace
+cargo clippy --workspace -- -D warnings
+
+# Dashboard
+cd dashboard
+npm install
+npm run dev
 ```
 
-### Project Structure
-| Crate | Package | Purpose |
-|-------|---------|---------|
-| `llmtrace-core` | - | Shared types and traits |
-| `llmtrace` | [crates.io](https://crates.io/crates/llmtrace) | HTTP proxy server (`cargo install llmtrace`) |
-| `llmtrace-security` | - | Security analysis engine (regex + DeBERTa + InjecGuard + PIGuard ensemble) |
-| `llmtrace-storage` | - | Storage backends (SQLite, PostgreSQL, ClickHouse, Redis) |
-| `llmtrace-python` | [PyPI](https://pypi.org/project/llmtracing/) | Python SDK (`pip install llmtracing`, imports as `import llmtrace`) |
+For a host-side proxy against Compose storage, point `.env` URLs at `localhost` published ports instead of Compose DNS names (`postgres`, `clickhouse`, `redis`).
 
-**[Development guide ->](CONTRIBUTING.md)**
+## Fork Contributions
+
+Work added or hardened in this fork includes:
+
+- Email/password signup and login with HttpOnly session cookies
+- IP rate limiting on public auth endpoints and password length guards
+- Operator-scoped dashboard UX (hide admin-only Tenants nav, skip global stats)
+- Workspace API token exposure and rotation on Settings after signup
+- Admin-key login that requires a configured key (no “any bearer” when auth is off)
+- Same-origin `next` redirect sanitisation after login
+- SQLite foreign keys for users/sessions (`009` migration)
+- Docker Compose env wiring for dashboard ↔ proxy auth
+- Proxy healthcheck fixed to use IPv4 (`127.0.0.1`)
+- Google sign-in button removed from the login UI (email/password only)
+
+## Credits
+
+This project is a fork of **LLMTrace**, originally created by **Evangelos Pappas** and contributors.
+
+- Upstream: https://github.com/epappas/llmtrace
+- License: [MIT](LICENSE) — copyright retained as required by the license
+
+Please keep the license notice when redistributing.
+
+## Further Documentation
+
+- [`docs/README.md`](docs/README.md) — documentation index
+- [`docs/getting-started/`](docs/getting-started/) — install and configuration
+- [`docs/guides/`](docs/guides/) — API and integration guides
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — contribution guidelines (upstream)
 
 ## License
 
-[MIT](LICENSE) - Free for commercial and personal use.
-
----
-
-**Star this repo** if LLMTrace helps secure your LLM applications!
-
-**Found a bug?** [Open an issue](https://github.com/epappas/llmtrace/issues)
-
-**Questions?** [Start a discussion](https://github.com/epappas/llmtrace/discussions)
+[MIT](LICENSE) — free for commercial and personal use, subject to the copyright notice in the license file.

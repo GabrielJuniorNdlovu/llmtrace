@@ -66,6 +66,11 @@ out/
 # Local Claude Code session data
 .claude/
 
+# Local AI / IDE scaffolding (never commit)
+.cursor/
+agentic_skills/
+lovable-llm-trace-nextjs/
+
 # Eval corpora staged locally (too large for git; fetch via inspect_evals)
 benchmarks/datasets/inspect_evals/
 
