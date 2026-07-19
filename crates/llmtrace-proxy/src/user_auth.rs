@@ -8,13 +8,15 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
 use chrono::{Duration, Utc};
+use dashmap::DashMap;
 use llmtrace_core::{
     ApiKeyRecord, ApiKeyRole, AuthContext, Tenant, TenantId, TenantScope, UserRecord,
     UserSessionRecord,
 };
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+use std::time::{Duration as StdDuration, Instant};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -30,8 +32,17 @@ const SESSION_TTL_DAYS: i64 = 7;
 /// Minimum accepted password length.
 const MIN_PASSWORD_LEN: usize = 8;
 
+/// Maximum accepted password length (DoS guard for Argon2).
+const MAX_PASSWORD_LEN: usize = 128;
+
 /// Number of random bytes in a session token (256 bits).
 const SESSION_RANDOM_BYTES: usize = 32;
+
+/// Auth abuse window and budgets (per client IP).
+const AUTH_RATE_WINDOW: StdDuration = StdDuration::from_secs(60);
+const AUTH_SIGNUP_LIMIT: u32 = 5;
+const AUTH_LOGIN_LIMIT: u32 = 20;
+const AUTH_OAUTH_LIMIT: u32 = 20;
 
 // ---------------------------------------------------------------------------
 // Request / response types
@@ -111,6 +122,61 @@ pub struct AuthSessionResponse {
     pub user: UserView,
     /// Tenant ID owned by the user.
     pub tenant_id: TenantId,
+    /// Tenant traffic token, returned once on signup only (`None` on login).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_token: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct RateBucket {
+    window_start: Instant,
+    count: u32,
+}
+
+fn auth_rate_map() -> &'static DashMap<String, RateBucket> {
+    static MAP: OnceLock<DashMap<String, RateBucket>> = OnceLock::new();
+    MAP.get_or_init(DashMap::new)
+}
+
+fn client_ip(headers: &HeaderMap) -> String {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|v| v.to_str().ok())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+/// Return `Some(error response)` when the client has exceeded `limit`.
+fn check_auth_rate(headers: &HeaderMap, action: &str, limit: u32) -> Option<Response> {
+    let key = format!("{action}:{}", client_ip(headers));
+    let now = Instant::now();
+    let mut entry = auth_rate_map().entry(key).or_insert(RateBucket {
+        window_start: now,
+        count: 0,
+    });
+    if now.duration_since(entry.window_start) >= AUTH_RATE_WINDOW {
+        entry.window_start = now;
+        entry.count = 0;
+    }
+    entry.count = entry.count.saturating_add(1);
+    if entry.count > limit {
+        Some(auth_error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many authentication attempts — try again shortly",
+        ))
+    } else {
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -181,6 +247,11 @@ fn validate_password(password: &str) -> Result<(), String> {
             "password must be at least {MIN_PASSWORD_LEN} characters"
         ));
     }
+    if password.len() > MAX_PASSWORD_LEN {
+        return Err(format!(
+            "password must be at most {MAX_PASSWORD_LEN} characters"
+        ));
+    }
     Ok(())
 }
 
@@ -208,6 +279,7 @@ fn display_name_from(req: &SignupRequest) -> String {
 async fn issue_session(
     state: &Arc<AppState>,
     user: &UserRecord,
+    api_token: Option<String>,
 ) -> Result<AuthSessionResponse, String> {
     let (plaintext, hash) = generate_session_token();
     let now = Utc::now();
@@ -228,6 +300,7 @@ async fn issue_session(
         session_token: plaintext,
         user: UserView::from(user),
         tenant_id: user.tenant_id,
+        api_token,
     })
 }
 
@@ -294,8 +367,13 @@ async fn provision_tenant_for_user(
 /// `POST /api/v1/auth/signup` — create a user + dedicated tenant, issue session.
 pub async fn signup(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(body): Json<SignupRequest>,
 ) -> Response {
+    if let Some(err) = check_auth_rate(&headers, "signup", AUTH_SIGNUP_LIMIT) {
+        return err;
+    }
+
     let email = normalize_email(&body.email);
     if let Err(msg) = validate_email(&email) {
         return auth_error(StatusCode::BAD_REQUEST, msg);
@@ -327,7 +405,7 @@ pub async fn signup(
     let display_name = display_name_from(&body);
     let tenant_name = format!("{display_name}'s workspace");
 
-    let (tenant, _api_key) = match provision_tenant_for_user(&state, &tenant_name).await {
+    let (tenant, api_token) = match provision_tenant_for_user(&state, &tenant_name).await {
         Ok(t) => t,
         Err(e) => return auth_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
     };
@@ -351,20 +429,34 @@ pub async fn signup(
         );
     }
 
-    match issue_session(&state, &user).await {
+    match issue_session(&state, &user, api_token).await {
         Ok(resp) => (StatusCode::CREATED, Json(resp)).into_response(),
-        Err(e) => auth_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
+        Err(e) => {
+            // Session failure after user creation — remove the incomplete account.
+            let _ = state.metadata().delete_tenant(tenant.id).await;
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, &e)
+        }
     }
 }
 
 /// `POST /api/v1/auth/login` — email/password login, issue session.
 pub async fn login(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(body): Json<UserLoginRequest>,
 ) -> Response {
+    if let Some(err) = check_auth_rate(&headers, "login", AUTH_LOGIN_LIMIT) {
+        return err;
+    }
+
     let email = normalize_email(&body.email);
     if validate_email(&email).is_err() || body.password.is_empty() {
         return auth_error(StatusCode::BAD_REQUEST, "email and password are required");
+    }
+    if let Err(msg) = validate_password(&body.password) {
+        // Keep response vague for login (don't leak password policy details).
+        let _ = msg;
+        return auth_error(StatusCode::UNAUTHORIZED, "invalid credentials");
     }
 
     let user = match state.metadata().get_user_by_email(&email).await {
@@ -389,7 +481,7 @@ pub async fn login(
         return auth_error(StatusCode::UNAUTHORIZED, "invalid credentials");
     }
 
-    match issue_session(&state, &user).await {
+    match issue_session(&state, &user, None).await {
         Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
         Err(e) => auth_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
     }
@@ -443,8 +535,12 @@ pub async fn me(
 /// `POST /api/v1/auth/oauth/google` — exchange an auth code for a session.
 pub async fn google_oauth(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(body): Json<GoogleOAuthRequest>,
 ) -> Response {
+    if let Some(err) = check_auth_rate(&headers, "oauth", AUTH_OAUTH_LIMIT) {
+        return err;
+    }
     let client_id = std::env::var("LLMTRACE_GOOGLE_CLIENT_ID").unwrap_or_default();
     let client_secret = std::env::var("LLMTRACE_GOOGLE_CLIENT_SECRET").unwrap_or_default();
     if client_id.is_empty() || client_secret.is_empty() {
@@ -480,6 +576,12 @@ pub async fn google_oauth(
             "Google did not return email and sub claims",
         );
     }
+    if !profile.email_verified {
+        return auth_error(
+            StatusCode::FORBIDDEN,
+            "Google account email is not verified",
+        );
+    }
 
     let email = normalize_email(&profile.email);
     let display_name = {
@@ -492,8 +594,10 @@ pub async fn google_oauth(
     };
 
     // Prefer google_sub match; fall back to email and link the sub.
-    let user = match state.metadata().get_user_by_google_sub(&profile.sub).await {
-        Ok(Some(u)) => u,
+    let mut is_new_google_signup = false;
+    let (user, signup_api_token) = match state.metadata().get_user_by_google_sub(&profile.sub).await
+    {
+        Ok(Some(u)) => (u, None),
         Ok(None) => match state.metadata().get_user_by_email(&email).await {
             Ok(Some(mut existing)) => {
                 existing.google_sub = Some(profile.sub.clone());
@@ -506,11 +610,12 @@ pub async fn google_oauth(
                         &format!("failed to link Google account: {e}"),
                     );
                 }
-                existing
+                (existing, None)
             }
             Ok(None) => {
                 let tenant_name = format!("{display_name}'s workspace");
-                let (tenant, _) = match provision_tenant_for_user(&state, &tenant_name).await {
+                let (tenant, api_token) = match provision_tenant_for_user(&state, &tenant_name).await
+                {
                     Ok(t) => t,
                     Err(e) => return auth_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
                 };
@@ -530,7 +635,8 @@ pub async fn google_oauth(
                         &format!("failed to create user: {e}"),
                     );
                 }
-                user
+                is_new_google_signup = true;
+                (user, api_token)
             }
             Err(e) => {
                 return auth_error(
@@ -547,9 +653,14 @@ pub async fn google_oauth(
         }
     };
 
-    match issue_session(&state, &user).await {
+    match issue_session(&state, &user, signup_api_token).await {
         Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
-        Err(e) => auth_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
+        Err(e) => {
+            if is_new_google_signup {
+                let _ = state.metadata().delete_tenant(user.tenant_id).await;
+            }
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, &e)
+        }
     }
 }
 
@@ -571,6 +682,8 @@ struct GoogleTokenResponse {
 struct GoogleUserInfo {
     sub: String,
     email: String,
+    #[serde(default)]
+    email_verified: bool,
     #[serde(default)]
     name: String,
 }
@@ -712,6 +825,26 @@ mod tests {
     fn test_rejects_short_password() {
         assert!(validate_password("short").is_err());
         assert!(validate_password("longenough").is_ok());
+    }
+
+    #[test]
+    fn test_rejects_password_over_max_length() {
+        let too_long = "a".repeat(MAX_PASSWORD_LEN + 1);
+        assert!(validate_password(&too_long).is_err());
+        let at_limit = "a".repeat(MAX_PASSWORD_LEN);
+        assert!(validate_password(&at_limit).is_ok());
+    }
+
+    #[test]
+    fn test_auth_rate_limit_trips_after_limit() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "203.0.113.50".parse().unwrap());
+        // Unique action key so parallel/repeated suite runs do not share state.
+        let action = format!("unit-test-rate-{}", Uuid::new_v4());
+        for _ in 0..3 {
+            assert!(check_auth_rate(&headers, &action, 3).is_none());
+        }
+        assert!(check_auth_rate(&headers, &action, 3).is_some());
     }
 
     #[test]

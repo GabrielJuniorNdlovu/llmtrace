@@ -1,27 +1,16 @@
 import { test, expect } from "@playwright/test";
 
 // ---------------------------------------------------------------------------
-// Admin-key login flow (issue #250)
+// Admin-key login flow (issue #250) + auth hardening
 //
-// CI stack runs the proxy without an admin key and the dashboard with
-// `LLMTRACE_DASHBOARD_AUTH_DISABLED=1`. That means:
-//   * The middleware short-circuits, so we cannot test the "unauthenticated
-//     -> 302 to /login" path here against the live stack — that branch is
-//     covered by the unit test below (route handler) and will be exercised
-//     by the maintainer-run live Basilica smoke test.
-//   * The proxy accepts every bearer, so the login route's
-//     "valid key sets cookie" branch still exercises the real proxy path.
-//
-// What we DO assert end-to-end against the CI stack:
-//   1. `/health` returns 200 with no cookie (Basilica readiness probe).
-//   2. `/login` renders the form (public).
-//   3. `POST /api/auth/login` with no body returns 400.
-//   4. `POST /api/auth/login` against the real proxy with a bearer the proxy
-//      accepts returns 200 + sets the host-scoped session cookie.
-//   5. `POST /api/auth/logout` clears the cookie (maxAge=0).
+// When LLMTRACE_AUTH_ADMIN_KEY is set on the dashboard, login must use that
+// exact key (not "any non-empty bearer"). CI/local compose should seed the
+// same key on proxy + dashboard.
 // ---------------------------------------------------------------------------
 
 const PROXY_BASE = process.env.LLMTRACE_PROXY_URL ?? "http://127.0.0.1:8081";
+const ADMIN_KEY =
+  process.env.LLMTRACE_AUTH_ADMIN_KEY?.trim() || "llmt_local_admin_change_me";
 
 function expectedCookieName(host: string): string {
   const safe = host
@@ -29,6 +18,17 @@ function expectedCookieName(host: string): string {
     .replace(/:\d+$/, "")
     .replace(/[^A-Za-z0-9_-]/g, "_");
   return `llmtrace_session__${safe}`;
+}
+
+/** Mirror of dashboard `safeNextPath` for open-redirect regression checks. */
+function safeNextPath(raw: string | null | undefined, fallback = "/"): string {
+  if (!raw) return fallback;
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("/")) return fallback;
+  if (trimmed.startsWith("//")) return fallback;
+  if (trimmed.includes("\\")) return fallback;
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) return fallback;
+  return trimmed;
 }
 
 test.describe("Admin-key login (issue #250)", () => {
@@ -56,9 +56,12 @@ test.describe("Admin-key login (issue #250)", () => {
 
   test("login page renders the credentials form", async ({ page }) => {
     await page.goto("/login");
+    await expect(page.getByTestId("login-email")).toBeVisible();
+    await expect(page.getByTestId("login-password")).toBeVisible();
+    await expect(page.getByTestId("login-submit")).toBeVisible();
+    await page.getByRole("button", { name: "Sign in with admin key" }).click();
     await expect(page.getByTestId("login-username")).toBeVisible();
     await expect(page.getByTestId("login-admin-key")).toBeVisible();
-    await expect(page.getByTestId("login-submit")).toBeVisible();
   });
 
   test("identity endpoint exposes expected username (default 'admin')", async ({ request }) => {
@@ -79,23 +82,31 @@ test.describe("Admin-key login (issue #250)", () => {
 
   test("login route rejects wrong username with 401", async ({ request }) => {
     const res = await request.post("/api/auth/login", {
-      data: { username: "definitely-not-the-seeded-user", admin_key: "test-key-for-ci-stack" },
+      data: { username: "definitely-not-the-seeded-user", admin_key: ADMIN_KEY },
+      headers: { "Content-Type": "application/json" },
+    });
+    expect(res.status()).toBe(401);
+  });
+
+  test("login route rejects wrong admin key with 401", async ({ request }) => {
+    const identityRes = await request.get("/api/auth/identity");
+    const identity = (await identityRes.json()) as { username: string };
+    const res = await request.post("/api/auth/login", {
+      data: {
+        username: identity.username,
+        admin_key: "definitely-not-the-configured-admin-key",
+      },
       headers: { "Content-Type": "application/json" },
     });
     expect(res.status()).toBe(401);
   });
 
   test("login route sets host-scoped session cookie on success", async ({ request, baseURL }) => {
-    // Fetch the seeded username via the public identity endpoint so this test
-    // matches whatever the CI stack was provisioned with (defaults to "admin").
     const identityRes = await request.get("/api/auth/identity");
     const identity = (await identityRes.json()) as { username: string };
 
-    // The CI proxy accepts any bearer (no admin_key configured), so any
-    // non-empty key will validate successfully. This exercises the real
-    // username check + the real upstream proxy validation + cookie set.
     const res = await request.post("/api/auth/login", {
-      data: { username: identity.username, admin_key: "test-key-for-ci-stack" },
+      data: { username: identity.username, admin_key: ADMIN_KEY },
       headers: { "Content-Type": "application/json" },
     });
     expect(res.status(), `login response: ${await res.text()}`).toBe(200);
@@ -105,7 +116,6 @@ test.describe("Admin-key login (issue #250)", () => {
     expect(setCookie.toLowerCase()).toContain("httponly");
     expect(setCookie.toLowerCase()).toContain("samesite=strict");
 
-    // Confirm the cookie name carries the host suffix.
     const host = new URL(baseURL ?? "http://localhost:3000").host;
     expect(setCookie).toContain(expectedCookieName(host));
   });
@@ -115,7 +125,14 @@ test.describe("Admin-key login (issue #250)", () => {
     expect(res.status()).toBe(200);
     const setCookie = res.headers()["set-cookie"] ?? "";
     expect(setCookie).toContain("llmtrace_session__");
-    // Cookie cleared either via Max-Age=0 or an Expires date in the past.
     expect(/Max-Age=0|Expires=Thu, 01 Jan 1970/i.test(setCookie)).toBeTruthy();
+  });
+
+  test("safeNextPath rejects open redirects", async () => {
+    expect(safeNextPath("/traces")).toBe("/traces");
+    expect(safeNextPath("//evil.com")).toBe("/");
+    expect(safeNextPath("https://evil.com")).toBe("/");
+    expect(safeNextPath("/\\evil")).toBe("/");
+    expect(safeNextPath(null)).toBe("/");
   });
 });

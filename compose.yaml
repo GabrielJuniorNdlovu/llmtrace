@@ -125,8 +125,11 @@ services:
     ports:
       - "${DASHBOARD_PORT:-3000}:3000"
     environment:
-      # Server-side proxy URL (container networking)
+      # Server-side proxy URL (container networking). backend.ts accepts all
+      # three names so Compose and host-side runners stay interchangeable.
       LLMTRACE_API_URL: "http://llmtrace-proxy:8080"
+      LLMTRACE_PROXY_URL: "http://llmtrace-proxy:8080"
+      LLMTRACE_BACKEND_URL: "http://llmtrace-proxy:8080"
       # ClickHouse URL for direct operations (deletion)
       CLICKHOUSE_URL: "http://clickhouse:8123"
       # Client-side URL (browser → proxy)
@@ -134,6 +137,10 @@ services:
       NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
       NEXT_PUBLIC_DASHBOARD_URL: ${NEXT_PUBLIC_DASHBOARD_URL:-http://localhost:3000}
       LLMTRACE_GOOGLE_CLIENT_ID: ${LLMTRACE_GOOGLE_CLIENT_ID:-}
+      # Admin-key login compares against this value on the dashboard; the same
+      # key must be configured on the proxy via LLMTRACE_AUTH_ADMIN_KEY.
+      LLMTRACE_AUTH_ADMIN_KEY: ${LLMTRACE_AUTH_ADMIN_KEY:-}
+      LLMTRACE_DASHBOARD_ADMIN_USERNAME: ${LLMTRACE_DASHBOARD_ADMIN_USERNAME:-admin}
       # Listen on all interfaces
       HOSTNAME: "0.0.0.0"
       # Local-dev escape hatch: skip the login gate when set to 1.

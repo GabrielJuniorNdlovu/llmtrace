@@ -30,7 +30,8 @@ pub(crate) async fn open_pool(database_url: &str) -> Result<SqlitePool> {
     let connect_opts = SqliteConnectOptions::from_str(database_url)
         .map_err(|e| LLMTraceError::Storage(format!("Invalid database URL: {e}")))?
         .create_if_missing(true)
-        .journal_mode(SqliteJournalMode::Wal);
+        .journal_mode(SqliteJournalMode::Wal)
+        .foreign_keys(true);
 
     // For in-memory databases every connection gets its own database, so
     // restrict the pool to a single connection to keep a consistent view.

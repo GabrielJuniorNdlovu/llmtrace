@@ -47,6 +47,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     session_token?: string;
     user?: unknown;
     tenant_id?: string;
+    api_token?: string | null;
     error?: { message?: string } | string;
   } | null;
 
@@ -69,6 +70,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     ok: true,
     user: payload.user,
     tenant_id: payload.tenant_id,
+    // One-time plaintext traffic token — also retrievable later via Settings.
+    api_token: payload.api_token ?? null,
   });
   attachSessionCookie(
     res,

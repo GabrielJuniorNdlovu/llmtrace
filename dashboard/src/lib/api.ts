@@ -517,6 +517,23 @@ export async function healthCheck(): Promise<{ status: string }> {
 /** Helper: Find the tenant with the most recent activity. */
 export async function findActiveTenant(): Promise<string | undefined> {
   try {
+    // Dashboard user sessions are pinned to a single tenant — never call
+    // listTenants (Admin-only) for those users.
+    if (typeof window !== "undefined") {
+      try {
+        const meRes = await fetch("/api/auth/me", { cache: "no-store" });
+        if (meRes.ok) {
+          const me = (await meRes.json()) as { tenant_id?: string };
+          if (me.tenant_id) {
+            setStoredTenant(me.tenant_id);
+            return me.tenant_id;
+          }
+        }
+      } catch {
+        // Fall through to admin tenant discovery.
+      }
+    }
+
     // An explicit "all tenants" selection is authoritative — honour it
     // before touching the tenant list so read pages can scope=all.
     if (typeof window !== "undefined" &&

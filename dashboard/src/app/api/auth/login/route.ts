@@ -5,7 +5,9 @@ import {
   SESSION_TTL_SECONDS,
   USER_SESSION_TTL_SECONDS,
   expectedAdminUsername,
+  expectedAdminKey,
   usernameMatches,
+  secretMatches,
   attachSessionCookie,
   requestIsSecure,
 } from "@/lib/auth";
@@ -21,16 +23,8 @@ interface AuthSessionPayload {
   session_token?: string;
   user?: unknown;
   tenant_id?: string;
+  api_token?: string | null;
   error?: { message?: string } | string;
-}
-
-async function validateAdminKey(adminKey: string): Promise<boolean> {
-  const { response } = await fetchWithFallback("/api/v1/auth/keys", {
-    method: "GET",
-    headers: { Authorization: `Bearer ${adminKey}` },
-    cache: "no-store",
-  });
-  return response.ok;
 }
 
 async function passwordLogin(
@@ -92,16 +86,50 @@ async function adminKeyLogin(
     return NextResponse.json({ error: "invalid credentials" }, { status: 401 });
   }
 
-  let valid = false;
-  try {
-    valid = await validateAdminKey(adminKey);
-  } catch (e) {
-    console.error("[auth/login] validation failed:", e);
-    return NextResponse.json({ error: "backend unavailable" }, { status: 502 });
+  const expectedKey = expectedAdminKey();
+  if (!expectedKey) {
+    return NextResponse.json(
+      {
+        error:
+          "admin-key login is not configured (set LLMTRACE_AUTH_ADMIN_KEY on the dashboard)",
+      },
+      { status: 503 },
+    );
   }
 
-  if (!valid) {
+  // Compare against the configured bootstrap key — never trust "proxy accepted
+  // any bearer" which happens whenever LLMTRACE_AUTH_ENABLED=0.
+  if (!secretMatches(adminKey, expectedKey)) {
     return NextResponse.json({ error: "invalid credentials" }, { status: 401 });
+  }
+
+  // Best-effort upstream probe so a mismatched proxy/dashboard key pair is
+  // surfaced clearly when proxy auth is enabled.
+  try {
+    const { response } = await fetchWithFallback("/api/v1/auth/keys", {
+      method: "GET",
+      headers: { Authorization: `Bearer ${adminKey}` },
+      cache: "no-store",
+    });
+    if (!response.ok && response.status !== 401 && response.status !== 403) {
+      // Transport/backend errors only — 401 here still means the local key
+      // matched but the proxy rejected it (auth disabled vs enabled mismatch).
+      console.warn(
+        `[auth/login] upstream admin-key probe returned ${response.status}`,
+      );
+    }
+    if (response.status === 401 || response.status === 403) {
+      return NextResponse.json(
+        {
+          error:
+            "admin key accepted by the dashboard but rejected by the proxy — ensure LLMTRACE_AUTH_ENABLED=1 and the same LLMTRACE_AUTH_ADMIN_KEY is set on both",
+        },
+        { status: 502 },
+      );
+    }
+  } catch (e) {
+    console.error("[auth/login] upstream probe failed:", e);
+    return NextResponse.json({ error: "backend unavailable" }, { status: 502 });
   }
 
   const res = NextResponse.json({ ok: true });

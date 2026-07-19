@@ -261,6 +261,37 @@ fn require_admin(auth: &AuthContext) -> Option<Response> {
     }
 }
 
+/// Allow admins, or operators/viewers acting on their own tenant.
+fn require_admin_or_own_tenant(auth: &AuthContext, tenant_id: TenantId) -> Option<Response> {
+    if auth.role.has_permission(ApiKeyRole::Admin) {
+        return None;
+    }
+    if auth.tenant_id == tenant_id
+        && (auth.role.has_permission(ApiKeyRole::Operator)
+            || auth.role.has_permission(ApiKeyRole::Viewer))
+    {
+        return None;
+    }
+    Some(api_error(
+        StatusCode::FORBIDDEN,
+        "Insufficient permissions: requires admin role or access to your own tenant",
+    ))
+}
+
+/// Allow admins, or operators acting on their own tenant (token read/reset).
+fn require_admin_or_own_operator(auth: &AuthContext, tenant_id: TenantId) -> Option<Response> {
+    if auth.role.has_permission(ApiKeyRole::Admin) {
+        return None;
+    }
+    if auth.tenant_id == tenant_id && auth.role.has_permission(ApiKeyRole::Operator) {
+        return None;
+    }
+    Some(api_error(
+        StatusCode::FORBIDDEN,
+        "Insufficient permissions: requires admin role or operator access to your own tenant",
+    ))
+}
+
 /// `POST /api/v1/tenants` — create a new tenant.
 #[utoipa::path(
     post,
@@ -447,10 +478,10 @@ pub async fn get_tenant(
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> Response {
-    if let Some(err) = require_admin(&auth) {
+    let tenant_id = TenantId(id);
+    if let Some(err) = require_admin_or_own_tenant(&auth, tenant_id) {
         return err;
     }
-    let tenant_id = TenantId(id);
     match state.metadata().get_tenant(tenant_id).await {
         Ok(Some(tenant)) => Json(TenantView::from(tenant)).into_response(),
         Ok(None) => api_error(StatusCode::NOT_FOUND, "Tenant not found"),
@@ -622,7 +653,8 @@ pub async fn get_current_tenant_token(
     }
 }
 
-/// `GET /api/v1/tenants/:id/token` — retrieve the API token for a specific tenant (Admin only).
+/// `GET /api/v1/tenants/:id/token` — retrieve the API token for a tenant.
+/// Admins may fetch any tenant; Operators may fetch only their own.
 #[utoipa::path(
     get,
     path = "/api/v1/tenants/{id}/token",
@@ -644,10 +676,11 @@ pub async fn get_tenant_token(
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> Response {
-    if let Some(err) = require_admin(&auth) {
+    let tenant_id = TenantId(id);
+    if let Some(err) = require_admin_or_own_operator(&auth, tenant_id) {
         return err;
     }
-    match state.metadata().get_tenant(TenantId(id)).await {
+    match state.metadata().get_tenant(tenant_id).await {
         Ok(Some(tenant)) => Json(TenantTokenResponse {
             api_token: tenant.api_token,
         })
@@ -679,10 +712,10 @@ pub async fn reset_tenant_token(
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> Response {
-    if let Some(err) = require_admin(&auth) {
+    let tenant_id = TenantId(id);
+    if let Some(err) = require_admin_or_own_operator(&auth, tenant_id) {
         return err;
     }
-    let tenant_id = TenantId(id);
 
     // Fetch existing tenant
     let mut tenant = match state.metadata().get_tenant(tenant_id).await {

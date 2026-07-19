@@ -55,11 +55,21 @@ export default function OverviewPage() {
       try {
         const tenantId = await findActiveTenant();
 
+        // Session users are Operators scoped to one tenant — skip cluster-wide
+        // stats (scope=all requires Admin).
+        let isSessionUser = false;
+        try {
+          const meRes = await fetch("/api/auth/me", { cache: "no-store" });
+          isSessionUser = meRes.ok;
+        } catch {
+          isSessionUser = false;
+        }
+
         const [statsRes, findingsRes, tracesRes, globalRes] = await Promise.all([
           getStats(tenantId),
           listSecurityFindings({ limit: 10 }, tenantId),
           listTraces({ limit: 100 }, tenantId),
-          getGlobalStats(),
+          isSessionUser ? Promise.resolve(null) : getGlobalStats(),
         ]);
         setStats(statsRes);
         setGlobalStats(globalRes);
@@ -149,29 +159,39 @@ export default function OverviewPage() {
         )}
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-        <StatCard
-          title="Global Transactions"
-          value={globalStats?.total_traces ?? "—"}
-          description="Across all tenants"
-          icon={Activity}
-        />
-        <StatCard
-          title="Global Security Findings"
-          value={globalStats?.total_findings ?? "—"}
-          description="Total risks detected"
-          icon={Shield}
-        />
-        <StatCard
-          title="Global Costs"
-          value={
-            globalStats?.total_cost_usd != null
-              ? `$${globalStats.total_cost_usd.toFixed(2)}`
-              : "—"
-          }
-          description="Cluster-wide spend"
-          icon={DollarSign}
-        />
+      <div
+        className={
+          globalStats
+            ? "grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6"
+            : "grid gap-4 md:grid-cols-2 lg:grid-cols-3"
+        }
+      >
+        {globalStats ? (
+          <>
+            <StatCard
+              title="Global Transactions"
+              value={globalStats.total_traces ?? "—"}
+              description="Across all tenants"
+              icon={Activity}
+            />
+            <StatCard
+              title="Global Security Findings"
+              value={globalStats.total_findings ?? "—"}
+              description="Total risks detected"
+              icon={Shield}
+            />
+            <StatCard
+              title="Global Costs"
+              value={
+                globalStats.total_cost_usd != null
+                  ? `$${globalStats.total_cost_usd.toFixed(2)}`
+                  : "—"
+              }
+              description="Cluster-wide spend"
+              icon={DollarSign}
+            />
+          </>
+        ) : null}
         <StatCard
           title="Total Traces"
           value={stats?.total_traces ?? "—"}

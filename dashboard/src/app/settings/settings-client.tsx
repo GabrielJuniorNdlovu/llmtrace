@@ -2,11 +2,15 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { RefreshCw, CheckCircle, XCircle, Copy, Check } from "lucide-react";
+import { RefreshCw, CheckCircle, XCircle, Copy, Check, KeyRound } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { healthCheck } from "@/lib/api";
+import {
+  getTenantToken,
+  resetTenantToken,
+  healthCheck,
+} from "@/lib/api";
 
 interface HealthStatus {
   status: string;
@@ -216,6 +220,11 @@ export default function SettingsClient({ proxyUrl }: SettingsClientProps) {
   const [upstream, setUpstream] = useState<UpstreamUrlState>({ status: "loading" });
   const [loading, setLoading] = useState(false);
   const [configLoading, setConfigLoading] = useState(false);
+  const [sessionTenantId, setSessionTenantId] = useState<string | null>(null);
+  const [apiToken, setApiToken] = useState<string | null>(null);
+  const [tokenLoading, setTokenLoading] = useState(false);
+  const [tokenError, setTokenError] = useState<string | null>(null);
+  const [showNewTokenBanner, setShowNewTokenBanner] = useState(false);
 
   async function checkHealth(): Promise<void> {
     console.log("[Settings] Checking health via API helper...");
@@ -250,9 +259,67 @@ export default function SettingsClient({ proxyUrl }: SettingsClientProps) {
     }
   }
 
+  async function loadWorkspaceToken(tenantId: string): Promise<void> {
+    setTokenLoading(true);
+    setTokenError(null);
+    try {
+      let fromSignup: string | null = null;
+      try {
+        fromSignup = sessionStorage.getItem("llmtrace_signup_api_token");
+        if (fromSignup) {
+          sessionStorage.removeItem("llmtrace_signup_api_token");
+        }
+      } catch {
+        fromSignup = null;
+      }
+      if (fromSignup) {
+        setApiToken(fromSignup);
+        return;
+      }
+      const res = await getTenantToken(tenantId);
+      setApiToken(res.api_token);
+    } catch (e) {
+      setTokenError(e instanceof Error ? e.message : "Failed to load API token");
+      setApiToken(null);
+    } finally {
+      setTokenLoading(false);
+    }
+  }
+
+  async function handleResetToken(): Promise<void> {
+    if (!sessionTenantId) return;
+    setTokenLoading(true);
+    setTokenError(null);
+    try {
+      const res = await resetTenantToken(sessionTenantId);
+      setApiToken(res.api_token);
+    } catch (e) {
+      setTokenError(e instanceof Error ? e.message : "Failed to reset API token");
+    } finally {
+      setTokenLoading(false);
+    }
+  }
+
   useEffect(() => {
     checkHealth();
     fetchLiveConfig();
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      setShowNewTokenBanner(params.get("new_token") === "1");
+    }
+    let cancelled = false;
+    fetch("/api/auth/me", { cache: "no-store" })
+      .then(async (res) => {
+        if (!res.ok || cancelled) return;
+        const me = (await res.json()) as { tenant_id?: string };
+        if (!me.tenant_id || cancelled) return;
+        setSessionTenantId(me.tenant_id);
+        await loadWorkspaceToken(me.tenant_id);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const proxyValue = proxyUrl.trim().length > 0 ? proxyUrl : null;
@@ -269,6 +336,53 @@ export default function SettingsClient({ proxyUrl }: SettingsClientProps) {
       <p className="text-sm text-muted-foreground">
         URLs, connectivity, and runtime configuration for the LLMTrace proxy
       </p>
+
+      {sessionTenantId ? (
+        <Card data-testid="workspace-api-token-card">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <KeyRound className="h-4 w-4" />
+              Workspace API Token
+            </CardTitle>
+            <CardDescription>
+              Use this bearer token when sending traffic through the proxy for your
+              workspace. Rotate it if it may have been exposed.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {showNewTokenBanner ? (
+              <p className="rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-foreground">
+                Your account is ready. Copy your workspace API token below — you can
+                always retrieve or rotate it here later.
+              </p>
+            ) : null}
+            {tokenError ? (
+              <p className="text-sm text-destructive">{tokenError}</p>
+            ) : null}
+            <UrlRow
+              label="API token"
+              value={apiToken}
+              emptyLabel={tokenLoading ? "Loading..." : "Unavailable"}
+              emptyTone="warning"
+              note="Send as Authorization: Bearer <token> on /v1/* requests."
+              testId="workspace-api-token-row"
+              copyable
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void handleResetToken()}
+              disabled={tokenLoading || !sessionTenantId}
+              data-testid="reset-workspace-api-token"
+            >
+              <RefreshCw
+                className={`mr-2 h-4 w-4 ${tokenLoading ? "animate-spin" : ""}`}
+              />
+              Rotate token
+            </Button>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {/* API Connection */}
       <Card>

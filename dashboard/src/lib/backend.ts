@@ -6,6 +6,7 @@
 const backendUrlCandidates: string[] = [
   process.env.LLMTRACE_PROXY_URL,
   process.env.LLMTRACE_BACKEND_URL,
+  process.env.LLMTRACE_API_URL,
   "http://llmtrace-proxy:8080",
   "http://llmtrace-proxy:8081",
   "http://127.0.0.1:8080",

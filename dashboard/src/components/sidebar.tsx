@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -19,14 +20,22 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const navItems = [
+interface NavItem {
+  href: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+  /** When true, only admin-key sessions (no `/api/auth/me` user) see this item. */
+  adminOnly?: boolean;
+}
+
+const navItems: NavItem[] = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
   { href: "/traces", label: "Traces", icon: FileSearch },
   { href: "/security", label: "Security", icon: Shield },
   { href: "/audit", label: "Audit", icon: ScrollText },
   { href: "/playground", label: "Playground", icon: MessageSquare },
   { href: "/costs", label: "Costs", icon: DollarSign },
-  { href: "/tenants", label: "Tenants", icon: Users },
+  { href: "/tenants", label: "Tenants", icon: Users, adminOnly: true },
   { href: "/compliance", label: "Compliance", icon: FileCheck },
   { href: "/status", label: "Status", icon: Gauge },
   { href: "/api-docs", label: "API Docs", icon: Code },
@@ -37,6 +46,25 @@ const bottomItems = [{ href: "/settings", label: "Settings", icon: Settings }];
 
 export function Sidebar() {
   const pathname = usePathname();
+  const [isSessionUser, setIsSessionUser] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/auth/me", { cache: "no-store" })
+      .then((res) => {
+        if (!cancelled) setIsSessionUser(res.ok);
+      })
+      .catch(() => {
+        if (!cancelled) setIsSessionUser(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const visibleNav = navItems.filter(
+    (item) => !(item.adminOnly && isSessionUser),
+  );
 
   const handleSignOut = async () => {
     try {
@@ -59,7 +87,7 @@ export function Sidebar() {
           lt
         </Link>
         <nav className="flex w-full flex-col gap-1.5 px-3 py-1">
-          {navItems.map((item) => {
+          {visibleNav.map((item) => {
             const active =
               item.href === "/"
                 ? pathname === "/"

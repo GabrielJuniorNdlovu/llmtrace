@@ -71,6 +71,11 @@ pub fn sqlite_migrations() -> Vec<Migration> {
             description: "users_and_sessions".to_string(),
             sql: include_str!("../migrations/sqlite/008_users_and_sessions.sql"),
         },
+        Migration {
+            version: 9,
+            description: "users_sessions_foreign_keys".to_string(),
+            sql: include_str!("../migrations/sqlite/009_users_sessions_foreign_keys.sql"),
+        },
     ]
 }
 

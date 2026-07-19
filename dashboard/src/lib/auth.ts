@@ -118,3 +118,42 @@ export function usernameMatches(submitted: string, expected: string): boolean {
   }
   return mismatch === 0;
 }
+
+/**
+ * Constant-time-ish string equality for secrets (admin keys).
+ * Length mismatch still short-circuits, but content is compared without
+ * early exit per character.
+ */
+export function secretMatches(submitted: string, expected: string): boolean {
+  if (submitted.length !== expected.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < submitted.length; i++) {
+    mismatch |= submitted.charCodeAt(i) ^ expected.charCodeAt(i);
+  }
+  return mismatch === 0;
+}
+
+/**
+ * Bootstrap admin key seeded via `LLMTRACE_AUTH_ADMIN_KEY`. Empty means
+ * admin-key login is disabled on this dashboard.
+ */
+export function expectedAdminKey(): string | null {
+  const raw = process.env.LLMTRACE_AUTH_ADMIN_KEY;
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * Restrict post-login redirects to same-origin relative paths.
+ * Rejects protocol-relative URLs, absolute URLs, and empty junk.
+ */
+export function safeNextPath(raw: string | null | undefined, fallback = "/"): string {
+  if (!raw) return fallback;
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("/")) return fallback;
+  if (trimmed.startsWith("//")) return fallback;
+  if (trimmed.includes("\\")) return fallback;
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) return fallback;
+  return trimmed;
+}

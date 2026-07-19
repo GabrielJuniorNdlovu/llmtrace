@@ -8,16 +8,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { setStoredTenant } from "@/lib/api";
+import { safeNextPath } from "@/lib/auth";
 
 type AuthMode = "signup" | "login" | "admin";
-
-const GOOGLE_ICON_PATH =
-  "M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z";
 
 export function AuthForm(): React.ReactElement {
   const router = useRouter();
   const search = useSearchParams();
-  const next = search.get("next") || "/";
+  const next = safeNextPath(search.get("next"), "/");
 
   const [mode, setMode] = useState<AuthMode>("login");
   const [showPassword, setShowPassword] = useState(false);
@@ -30,19 +28,12 @@ export function AuthForm(): React.ReactElement {
   const [adminKey, setAdminKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  const googleConfigured = Boolean(
-    process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,
-  );
 
   useEffect(() => {
     const err = search.get("error");
     if (!err) return;
     const messages: Record<string, string> = {
       sso: "That one-click sign-in link has expired or is invalid.",
-      google_unconfigured: "Google sign-in is not configured on this deployment.",
-      google_state: "Google sign-in failed CSRF validation. Please try again.",
-      google_backend: "Could not reach the auth backend for Google sign-in.",
-      google_failed: "Google sign-in failed. Please try again or use email.",
     };
     setError(messages[err] ?? "Sign-in failed. Please try again.");
   }, [search]);
@@ -85,6 +76,7 @@ export function AuthForm(): React.ReactElement {
         const body = (await res.json().catch(() => null)) as {
           error?: string;
           tenant_id?: string;
+          api_token?: string | null;
         } | null;
         if (!res.ok) {
           setError(body?.error ?? `Signup failed (${res.status})`);
@@ -93,7 +85,14 @@ export function AuthForm(): React.ReactElement {
         if (body?.tenant_id) {
           setStoredTenant(body.tenant_id);
         }
-        router.replace(next);
+        if (body?.api_token) {
+          try {
+            sessionStorage.setItem("llmtrace_signup_api_token", body.api_token);
+          } catch {
+            // sessionStorage may be unavailable; Settings can still fetch the token.
+          }
+        }
+        router.replace(body?.api_token ? "/settings?new_token=1" : next);
         router.refresh();
         return;
       }
@@ -352,52 +351,6 @@ export function AuthForm(): React.ReactElement {
               : "Sign in"}
         </Button>
       </form>
-
-      {mode !== "admin" && (
-        <>
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t border-muted" />
-            </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-background px-3 text-muted-foreground">
-                Or continue with
-              </span>
-            </div>
-          </div>
-
-          <Button
-            type="button"
-            variant="outline"
-            className="h-11 border-muted bg-transparent text-foreground hover:bg-muted/50"
-            disabled={!googleConfigured}
-            onClick={() => {
-              window.location.href = "/api/auth/google/start";
-            }}
-            title={
-              googleConfigured
-                ? "Sign in with Google"
-                : "Google sign-in is not configured"
-            }
-          >
-            <svg
-              role="img"
-              viewBox="0 0 24 24"
-              className="mr-2 size-4"
-              fill="currentColor"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path d={GOOGLE_ICON_PATH} />
-            </svg>
-            Google
-            {!googleConfigured && (
-              <span className="ml-2 text-xs text-muted-foreground">
-                (not configured)
-              </span>
-            )}
-          </Button>
-        </>
-      )}
 
       {mode !== "admin" && (
         <p className="text-center text-xs text-muted-foreground">
